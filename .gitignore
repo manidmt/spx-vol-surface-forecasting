@@ -2,6 +2,7 @@
 planning/
 latex/
 CLAUDE.md
+.claude/
 
 # Data (Bloomberg: large and licensed)
 data/
