@@ -1,0 +1,35 @@
+# Private planning, thesis drafts and assistant notes
+planning/
+latex/
+CLAUDE.md
+
+# Data (Bloomberg: large and licensed)
+data/
+*.csv
+*.parquet
+*.duckdb
+*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+# Environment and secrets
+.env
+.env.*
+
+# Experiment outputs
+runs/
+mlruns/
+models/
+reports/
+logs/
+
+# System
+.DS_Store
+.vscode/
