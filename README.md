@@ -33,20 +33,22 @@ before extending to more tenors and to the full surface.
 | Notebook | Content |
 |---|---|
 | `01_eda_series.ipynb` | Exploratory analysis of the 30-day smile: stylised facts, bad-print detection, stationarity, distribution of daily changes, autocorrelation and PCA of smile changes |
-| `02_baselines.ipynb` | Persistence and walk-forward AR(1) on daily changes (expanding and 252-day windows, OLS and Huber), evaluated out of sample |
+| `02_baselines.ipynb` | Linear baselines on daily changes, walk-forward with monthly refits: per-strike AR(1) (expanding and 252-day windows, OLS and Huber), multivariate ridge using every strike as input, and a VAR(1) on three PCA factors |
 
-Out-of-sample results on the 30-day smile (2021-01-04 to 2026-10-07, 1,444 days, errors in
-volatility points averaged over the 9 moneyness levels):
+Out-of-sample results on the 30-day smile (2021-01-04 to 2026-10-07, 1,440 days common to all
+models, errors in volatility points averaged over the 9 moneyness levels):
 
 | Model | MAE | RMSE | MAE vs persistence | R² OOS vs persistence |
 |---|---|---|---|---|
-| Persistence | 0.907 | 1.453 | — | — |
-| AR(1), expanding window | 0.923 | 1.454 | +1.8 % | −0.001 |
-| AR(1), 252-day window | 0.903 | 1.435 | −0.5 % | +0.025 |
-| AR(1), 252-day window, Huber | 0.899 | 1.436 | −0.9 % | +0.023 |
+| Persistence | 0.906 | 1.453 | — | — |
+| AR(1), expanding window | 0.921 | 1.453 | +1.7 % | −0.000 |
+| AR(1), 252-day window, Huber | 0.898 | 1.435 | −0.9 % | +0.024 |
+| Ridge, 1 lag, 252-day window | 0.905 | 1.444 | −0.1 % | +0.012 |
+| VAR(1) on PCA factors, 252-day window | 0.916 | 1.448 | +1.1 % | +0.007 |
 
-Persistence is hard to beat: the best AR(1) improves MAE by about 1 % with a Diebold-Mariano
-p-value around 0.06–0.09.
+No linear baseline beats persistence significantly: the best one (AR(1) with a 252-day window and
+Huber loss) improves MAE by about 1 %, with Diebold-Mariano p-values of 0.06 (squared loss) and
+0.08 (absolute loss).
 
 ## Repository layout
 
