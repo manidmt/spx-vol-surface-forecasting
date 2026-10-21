@@ -34,6 +34,7 @@ before extending to more tenors and to the full surface.
 |---|---|
 | `01_eda_series.ipynb` | Exploratory analysis of the 30-day smile: stylised facts, bad-print detection, stationarity, distribution of daily changes, autocorrelation and PCA of smile changes |
 | `02_baselines.ipynb` | Linear baselines on daily changes, walk-forward with monthly refits: per-strike AR(1) (expanding and 252-day windows, OLS and Huber), multivariate ridge using every strike as input, and a VAR(1) on three PCA factors |
+| `03_cnn.ipynb` | Small 2D convolutional network over (days × moneyness) with change and level channels, Huber loss, early stopping and a 5-seed ensemble, same walk-forward protocol; ablation with the same network without nonlinearities |
 
 Out-of-sample results on the 30-day smile (2021-01-04 to 2026-10-07, 1,440 days common to all
 models, errors in volatility points averaged over the 9 moneyness levels):
@@ -45,10 +46,16 @@ models, errors in volatility points averaged over the 9 moneyness levels):
 | AR(1), 252-day window, Huber | 0.898 | 1.435 | −0.9 % | +0.024 |
 | Ridge, 1 lag, 252-day window | 0.905 | 1.444 | −0.1 % | +0.012 |
 | VAR(1) on PCA factors, 252-day window | 0.916 | 1.448 | +1.1 % | +0.007 |
+| CNN, 5-day window | 0.889 | 1.423 | −1.9 % | +0.041 |
+| CNN, 20-day window | 0.892 | 1.436 | −1.5 % | +0.023 |
+| CNN, 20-day window, linear | 0.892 | 1.430 | −1.5 % | +0.031 |
 
 No linear baseline beats persistence significantly: the best one (AR(1) with a 252-day window and
 Huber loss) improves MAE by about 1 %, with Diebold-Mariano p-values of 0.06 (squared loss) and
-0.08 (absolute loss).
+0.08 (absolute loss). The CNN with a 5-day window is the first model to beat persistence at the
+5 % level under absolute loss (Diebold-Mariano p = 0.02; p = 0.24 under squared loss), but it is not
+significantly better than the best AR(1), and the same network without nonlinearities performs just
+as well: the gain does not come from nonlinear structure.
 
 ## Repository layout
 
