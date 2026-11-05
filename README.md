@@ -3,23 +3,21 @@
 Master's thesis, Master in Quantitative Finance (IEB, Madrid).
 
 The goal is to forecast the **next-day implied volatility surface of the S&P 500 (SPX)** from
-information available at today's close, and to do it **without static arbitrage**. Forecasts are
-evaluated against the surface actually traded the next day, tenor by tenor, and always relative to
-non-trivial baselines.
+information available at today's close. The current stage is a methodological review of what
+neural networks can do on the surface, which is forecast directly on its grid; static no-arbitrage
+constraints are left for a later stage. Forecasts are evaluated against the surface actually traded
+the next day, tenor by tenor, and always relative to non-trivial baselines.
 
 ## Approach
 
 1. **Data.** SPX implied volatility by tenor and moneyness, the underlying, and cross-asset and
    derivatives-market series (rates, credit, FX smiles, oil, sector ETF vols, macro releases),
    downloaded from a Bloomberg terminal.
-2. **Surface construction.** Rebuild the surface from option chains: implied forward from put-call
-   parity, Black-76 inversion, OTM selection, log-moneyness and total variance, static
-   no-arbitrage checks and SVI calibration.
-3. **Representation.** Forecast a low-dimensional, arbitrage-aware description of the surface
-   (SVI/SSVI parameters, with PCA factors as a benchmark) instead of each grid point on its own.
-4. **Models.** Targets in daily changes, walk-forward evaluation. Econometric baselines first,
-   then gradient boosting and neural networks (convolutional, LSTM).
-5. **Evaluation.** MAE and RMSE by tenor and moneyness, Diebold-Mariano tests against the
+2. **Representation.** The Bloomberg surface on a fixed grid (7 tenors × 9 moneyness levels),
+   forecast as a whole by a single model rather than smile by smile.
+3. **Models.** Targets in daily changes, walk-forward evaluation. Econometric baselines first,
+   then neural networks (convolutional, LSTM), with exogenous inputs added by blocks.
+4. **Evaluation.** MAE and RMSE by tenor and moneyness, Diebold-Mariano tests against the
    baselines, and an economic backtest of straddles and strangles with transaction costs.
 
 Baselines: persistence (sticky strike / sticky moneyness), random walk in total variance and
@@ -27,14 +25,16 @@ autoregressive models on the surface factors.
 
 ## Current status
 
-The first step is the **30-day smile** (9 moneyness points, 80-120 %) forecast one day ahead,
-before extending to more tenors and to the full surface.
+The first step was the **30-day smile** (9 moneyness points, 80-120 %) forecast one day ahead;
+the second, the **full surface** (7 tenors × 9 moneyness levels).
 
 | Notebook | Content |
 |---|---|
 | `01_eda_series.ipynb` | Exploratory analysis of the 30-day smile: stylised facts, bad-print detection, stationarity, distribution of daily changes, autocorrelation and PCA of smile changes |
 | `02_baselines.ipynb` | Linear baselines on daily changes, walk-forward with monthly refits: per-strike AR(1) (expanding and 252-day windows, OLS and Huber), multivariate ridge using every strike as input, and a VAR(1) on three PCA factors |
 | `03_cnn.ipynb` | Small 2D convolutional network over (days × moneyness) with change and level channels, Huber loss, early stopping and a 5-seed ensemble, same walk-forward protocol; ablations with the same network without nonlinearities and with a ridge on the same flattened input window |
+| `04_surface_eda.ipynb` | Exploratory analysis of the full surface: bad-print detection across all tenors, volatility of daily changes by tenor and moneyness, correlation across tenors and PCA of surface changes |
+| `05_surface_cnn.ipynb` | 3D convolutional network over (days × tenor × moneyness) forecasting the whole surface at once, with a shared 1×1 or a dense output head, against persistence and a per-point AR(1) |
 
 Out-of-sample results on the 30-day smile (2021-01-04 to 2026-10-07, 1,440 days common to all
 models, errors in volatility points averaged over the 9 moneyness levels):
@@ -60,6 +60,21 @@ as well: the gain does not come from nonlinear structure. A ridge regression on 
 persistence (+1.1 % MAE) and to the linear CNN (Diebold-Mariano p < 0.001 under absolute loss), so
 the gain comes from how the network is fitted (Huber loss, weights shared across strikes, early
 stopping) rather than from its inputs.
+
+Out-of-sample results on the full surface (same period, 1,444 days, errors averaged over the 63
+grid points):
+
+| Model | MAE | RMSE | MAE vs persistence | R² OOS vs persistence |
+|---|---|---|---|---|
+| Persistence | 0.460 | 0.828 | — | — |
+| AR(1) per point, 252-day window, Huber | 0.457 | 0.822 | −0.6 % | +0.014 |
+| 3D CNN, 5-day window, shared head | 0.455 | 0.824 | −1.1 % | +0.009 |
+| 3D CNN, 5-day window, dense head | 0.455 | 0.823 | −1.1 % | +0.011 |
+
+The CNN improves on persistence at every tenor, from −1.7 % at 30 days to −0.4 % at 24 months
+(Diebold-Mariano p = 0.06 under absolute loss). Its gains concentrate on the short-dated downside
+wings, while the AR(1) does better at long-dated at-the-money points, where it captures noise in
+the Bloomberg surface that reverts the next day.
 
 ## Repository layout
 
