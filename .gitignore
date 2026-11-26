@@ -29,6 +29,7 @@ runs/
 mlruns/
 models/
 reports/
+figures/
 logs/
 
 # System
