@@ -1,4 +1,4 @@
-"""Calendar and underlying features available at the close of each surface date."""
+"""Exogenous features aligned to surface dates for next-day forecasts."""
 
 from importlib.resources import files
 from pathlib import Path
@@ -11,7 +11,15 @@ ECO_PATH = _BLOOMBERG_PATH / "macro" / "eco_cpi_nfp.csv"
 SPX_PATH = _BLOOMBERG_PATH / "spx" / "SPX_OHLCV.csv"
 
 _EVENT_TYPES = ("fomc", "cpi", "nfp")
-_BLOCKS = ("calendar", "underlying")
+MARKET_PATHS = (
+    _BLOOMBERG_PATH / "series" / "series_px_last_long.csv",
+    _BLOOMBERG_PATH / "fx" / "fx_smile_long.csv",
+    _BLOOMBERG_PATH / "ivol_etf" / "ivol30d_atm_long.csv",
+)
+_IVOL_PREFIX = "ivol:"
+_SECTOR_TICKERS = tuple(
+    f"{symbol} US Equity" for symbol in "XLB XLC XLE XLF XLI XLK XLP XLRE XLU XLV XLY".split()
+)
 
 
 _SCHEDULE_COLUMNS = ["event", "date", "known_from", "withdrawn_from"]
@@ -111,16 +119,130 @@ def underlying_features(spx: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def load_market_series(paths: tuple[Path, Path, Path] = MARKET_PATHS) -> pd.DataFrame:
+    """Load Bloomberg series, FX smiles and ETF implied vols in their original units."""
+    frames = []
+    for path, value in zip(paths, ("px_last", "px_last", "ivol_30d_atm"), strict=True):
+        observations = pd.read_csv(path, parse_dates=["date"], usecols=["date", "ticker", value])
+        wide = observations.pivot(index="date", columns="ticker", values=value)
+        frames.append(wide.add_prefix(_IVOL_PREFIX) if value == "ivol_30d_atm" else wide)
+    return pd.concat(frames, axis=1, sort=True)
+
+
+def align_asof(series: pd.Series, index: pd.DatetimeIndex, max_age: int = 5, lag: int = 0) -> pd.Series:
+    """Carry the latest eligible observation at most max_age weekdays to each surface date.
+
+    With a publication lag, the observation date is capped by the surface date lag rows back.
+    Measure age from the raw observation to the destination surface date.
+    """
+    if max_age < 0 or lag < 0:
+        raise ValueError("max_age and lag must be nonnegative.")
+    observed = series.dropna().sort_index()
+    eligible = index.to_series().shift(lag)
+    positions = observed.index.get_indexer(eligible, method="pad")
+    matched = (positions >= 0) & eligible.notna().to_numpy()
+    values = np.full(len(index), np.nan)
+    source = observed.index.take(positions[matched])
+    age = np.busday_count(
+        source.to_numpy(dtype="datetime64[D]"), index[matched].to_numpy(dtype="datetime64[D]")
+    )
+    values[matched] = np.where(age <= max_age, observed.to_numpy()[positions[matched]], np.nan)
+    return pd.Series(values, index=index, name=series.name)
+
+
+def rates_features(market: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Compute yield changes, curve slope, policy path change and funding spread in bp."""
+    us2y = 100 * align_asof(market["USGG2YR Index"], index)
+    us10y = 100 * align_asof(market["USGG10YR Index"], index)
+    bund10 = 100 * align_asof(market["GDBR10 Index"], index)
+    ff1 = align_asof(market["FF1 Comdty"], index)
+    ff4 = align_asof(market["FF4 Comdty"], index)
+    sofr = align_asof(market["SOFRRATE Index"], index, lag=1)
+    effr = align_asof(market["FEDL01 Index"], index, lag=1)
+    return pd.DataFrame(
+        {
+            "us2y_chg": us2y.diff(),
+            "us10y_chg": us10y.diff(),
+            "us_slope": us10y - us2y,
+            "bund10_chg": bund10.diff(),
+            "ff_path_chg": 100 * (ff1 - ff4).diff(),  # (100 - FF4) - (100 - FF1)
+            "funding": 100 * (sofr - effr),
+        }
+    )
+
+
+def credit_features(market: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Compute OAS changes in bp and HYG implied volatility in vol points."""
+    ig_oas = align_asof(market["LUACOAS Index"], index)
+    hy_oas = align_asof(market["LF98OAS Index"], index)
+    hyg_iv = align_asof(market[f"{_IVOL_PREFIX}HYG US Equity"], index)
+    return pd.DataFrame(
+        {
+            "ig_oas_chg": 100 * ig_oas.diff(),
+            "hy_oas_chg": 100 * hy_oas.diff(),
+            "hyg_iv": hyg_iv,
+            "hyg_iv_chg": hyg_iv.diff(),
+        }
+    )
+
+
+def cross_vol_features(market: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Compute volatility index log changes in percent and FX smile features in vol points."""
+    move = align_asof(market["MOVE Index"], index)
+    ovx = align_asof(market["OVX Index"], index)
+    eur_atm = align_asof(market["EURUSDV1M BGN Curncy"], index)
+    jpy_atm = align_asof(market["USDJPYV1M BGN Curncy"], index)
+    jpy_rr = align_asof(market["USDJPY25R1M BGN Curncy"], index)
+    return pd.DataFrame(
+        {
+            "move_chg": 100 * np.log(move).diff(),
+            "ovx_chg": 100 * np.log(ovx).diff(),
+            "eur_atm_chg": eur_atm.diff(),
+            "jpy_atm_chg": jpy_atm.diff(),
+            "jpy_rr": jpy_rr,
+            "jpy_rr_chg": jpy_rr.diff(),
+        }
+    )
+
+
+def sectors_features(market: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Compute mean IV change and population dispersion across all 11 sector ETFs."""
+    iv = pd.concat(
+        [align_asof(market[f"{_IVOL_PREFIX}{ticker}"], index) for ticker in _SECTOR_TICKERS], axis=1
+    )
+    prices = pd.concat([align_asof(market[ticker], index) for ticker in _SECTOR_TICKERS], axis=1)
+    returns = 100 * np.log(prices).diff()
+    return pd.DataFrame(
+        {
+            "sec_iv_chg": iv.mean(axis=1, skipna=False).diff(),
+            "sec_iv_disp": iv.std(axis=1, ddof=0, skipna=False),
+            "sec_ret_disp": returns.std(axis=1, ddof=0, skipna=False),
+        }
+    )
+
+
+_MARKET_BLOCKS = {
+    "rates": rates_features,
+    "credit": credit_features,
+    "cross_vol": cross_vol_features,
+    "sectors": sectors_features,
+}
+_BLOCKS = ("calendar", "underlying", *_MARKET_BLOCKS)
+
+
 def build_exog(blocks: list[str], index: pd.DatetimeIndex) -> pd.DataFrame:
     """Build the requested blocks in order and align their rows to the surface dates."""
     for block in blocks:
         if block not in _BLOCKS:
             raise ValueError(f"Unknown exogenous block {block!r}. Valid blocks are {', '.join(_BLOCKS)}.")
 
+    market = load_market_series() if any(block in _MARKET_BLOCKS for block in blocks) else pd.DataFrame()
     panels = []
     for block in blocks:
         if block == "calendar":
             panels.append(calendar_features(index, load_event_schedule()))
-        else:
+        elif block == "underlying":
             panels.append(underlying_features(load_spx()).reindex(index))
+        else:
+            panels.append(_MARKET_BLOCKS[block](market, index))
     return pd.concat(panels, axis=1) if panels else pd.DataFrame(index=index)

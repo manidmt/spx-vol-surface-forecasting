@@ -339,3 +339,144 @@ def test_features_real(real_surface: pd.DataFrame) -> None:
     for name, group in final.groupby("event"):
         counts = group["date"].dt.year.value_counts()
         assert counts.reindex(range(2019, 2027)).tolist() == expected[name]
+
+
+def test_load_market_series(tmp_path: Path) -> None:
+    series, fx, iv = [tmp_path / f"{name}.csv" for name in ("series", "fx", "iv")]
+    series.write_text("ticker,date,px_last\nHYG US Equity,2024-01-03,80\n", encoding="utf-8")
+    fx.write_text("ticker,date,px_last\nEURUSDV1M BGN Curncy,2024-01-02,9\n", encoding="utf-8")
+    iv.write_text("ticker,date,ivol_30d_atm\nHYG US Equity,2024-01-03,7\n", encoding="utf-8")
+    market = features.load_market_series(paths=(series, fx, iv))
+    assert market.index.tolist() == list(pd.to_datetime(["2024-01-02", "2024-01-03"]))
+    assert market.loc["2024-01-03", "HYG US Equity"] == 80
+    assert market.loc["2024-01-03", "ivol:HYG US Equity"] == 7
+    assert market.loc["2024-01-02", "EURUSDV1M BGN Curncy"] == 9
+
+
+def test_align_asof() -> None:
+    observations = pd.Series(
+        [3.0, 1.0, np.nan],
+        index=pd.to_datetime(
+            [
+                "2024-04-09",
+                "2024-03-28",
+                "2024-04-01",
+            ]
+        ),
+    )
+    surface = pd.to_datetime(
+        ["2024-03-27", "2024-03-28", "2024-04-01", "2024-04-04", "2024-04-05", "2024-04-09"]
+    )
+    np.testing.assert_allclose(features.align_asof(observations, surface), [np.nan, 1, 1, 1, np.nan, 3])
+    np.testing.assert_allclose(
+        features.align_asof(observations, surface, lag=1), [np.nan, np.nan, 1, 1, np.nan, np.nan]
+    )
+
+
+@pytest.fixture
+def market() -> pd.DataFrame:
+    values = {
+        "USGG2YR Index": [2, 2.1, 2.3],
+        "USGG10YR Index": [3, 3.2, 3.3],
+        "GDBR10 Index": [1, 1.3, 1.2],
+        "FF1 Comdty": [97, 96, 95],
+        "FF4 Comdty": [98, 97.5, 96],
+        "SOFRRATE Index": [2.1, 2.6, 4],
+        "FEDL01 Index": [2, 2.3, 3],
+        "LUACOAS Index": [1, 1.2, 1.4],
+        "LF98OAS Index": [4, 4.5, 4.4],
+        "ivol:HYG US Equity": [7, 8, 10],
+        "MOVE Index": [80, 100, 120],
+        "OVX Index": [30, 24, 36],
+        "EURUSDV1M BGN Curncy": [7, 8, 6],
+        "USDJPYV1M BGN Curncy": [8, 10, 13],
+        "USDJPY25R1M BGN Curncy": [-1, -2, 0],
+    }
+    for i, sector in enumerate("XLB XLC XLE XLF XLI XLK XLP XLRE XLU XLV XLY".split()):
+        ticker = f"{sector} US Equity"
+        values[ticker] = [100, 100 * np.exp(i / 100), 100 * np.exp(3 * i / 100)]
+        values[f"ivol:{ticker}"] = [10 + i, 11 + 2 * i, 13 + 3 * i]
+    return pd.DataFrame(values, index=pd.bdate_range("2024-01-02", periods=3, name="date"))
+
+
+MARKET_EXPECTED = {
+    "rates": {
+        "us2y_chg": [np.nan, 10, 20],
+        "us10y_chg": [np.nan, 20, 10],
+        "us_slope": [100, 110, 100],
+        "bund10_chg": [np.nan, 30, -10],
+        "ff_path_chg": [np.nan, -50, 50],
+        "funding": [np.nan, 10, 30],
+    },
+    "credit": {
+        "ig_oas_chg": [np.nan, 20, 20],
+        "hy_oas_chg": [np.nan, 50, -10],
+        "hyg_iv": [7, 8, 10],
+        "hyg_iv_chg": [np.nan, 1, 2],
+    },
+    "cross_vol": {
+        "move_chg": [np.nan, 100 * np.log(1.25), 100 * np.log(1.2)],
+        "ovx_chg": [np.nan, 100 * np.log(0.8), 100 * np.log(1.5)],
+        "eur_atm_chg": [np.nan, 1, -2],
+        "jpy_atm_chg": [np.nan, 2, 3],
+        "jpy_rr": [-1, -2, 0],
+        "jpy_rr_chg": [np.nan, -1, 2],
+    },
+    "sectors": {
+        "sec_iv_chg": [np.nan, 6, 7],
+        "sec_iv_disp": np.sqrt(10) * np.array([1, 2, 3]),
+        "sec_ret_disp": np.sqrt(10) * np.array([np.nan, 1, 2]),
+    },
+}
+
+
+@pytest.mark.parametrize("block", MARKET_EXPECTED)
+def test_market_features(block: str, market: pd.DataFrame) -> None:
+    build = getattr(features, f"{block}_features")
+    expected = pd.DataFrame(MARKET_EXPECTED[block], index=market.index, dtype=float)
+    pd.testing.assert_frame_equal(build(market, market.index), expected)
+
+
+@pytest.mark.parametrize("block", MARKET_EXPECTED)
+def test_market_features_no_look_ahead(block: str, market: pd.DataFrame) -> None:
+    build = getattr(features, f"{block}_features")
+    changed = market.copy()
+    changed.iloc[2:] += 1
+    before = market.index[:2]
+    pd.testing.assert_frame_equal(
+        build(market, market.index).loc[before], build(changed, market.index).loc[before]
+    )
+
+
+def test_build_exog_loads_market_once(market: pd.DataFrame, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def load() -> pd.DataFrame:
+        calls.append(True)
+        return market
+
+    monkeypatch.setattr(features, "load_market_series", load)
+    blocks = ["sectors", "rates", "cross_vol", "credit"]
+    combined = features.build_exog(blocks, market.index)
+    assert calls == [True]
+    assert list(combined.columns) == [column for block in blocks for column in MARKET_EXPECTED[block]]
+
+
+@pytest.mark.slow
+def test_market_features_real(real_surface: pd.DataFrame) -> None:
+    for path in features.MARKET_PATHS:
+        if not path.exists():
+            pytest.skip(f"{path} not available")
+    market = features.load_market_series()
+    panel = features.build_exog(list(MARKET_EXPECTED), real_surface.index)
+    test = panel.loc["2021-01-04":"2026-10-07"]
+    for block, expected in MARKET_EXPECTED.items():
+        share = np.isfinite(test[list(expected)]).all(axis=1).mean()
+        assert share >= 0.99, (block, share)
+
+    spike = pd.Timestamp("2019-09-17")
+    release = pd.Timestamp("2019-09-18")
+    sofr = features.align_asof(market["SOFRRATE Index"], real_surface.index, lag=1)
+    assert sofr.loc[spike] != pytest.approx(5.25)
+    assert sofr.loc[release] == pytest.approx(5.25)
+    assert panel.loc[release, "funding"] == pytest.approx(100 * (5.25 - market.loc[spike, "FEDL01 Index"]))
