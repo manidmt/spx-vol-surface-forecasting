@@ -57,7 +57,7 @@ def comparison_tables(errs: dict[str, pd.DataFrame], references: list[str]) -> d
             axis=1,
             names=["reference", "model"],
         ),
-        "dm": pd.concat(dm_parts) if dm_parts else pd.DataFrame(columns=["t_stat", "p_value"]),
+        "dm": pd.concat(dm_parts) if dm_parts else pd.DataFrame(columns=["t_stat", "p_value", "p_holm"]),
     }
 
 

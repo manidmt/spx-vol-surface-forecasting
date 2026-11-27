@@ -82,7 +82,7 @@ def test_dm_table_shape():
     errs = {n: _frame(idx) * rng.normal(size=(100, 1)) for n in ["persistence", "a", "b"]}
     t = dm_table(errs, ["persistence"], ["a", "b"])
     assert t.index.names == ["reference", "model", "loss"]
-    assert list(t.columns) == ["t_stat", "p_value"]
+    assert list(t.columns) == ["t_stat", "p_value", "p_holm"]
     assert len(t) == 4
 
 
@@ -178,3 +178,33 @@ def test_reproduces_notebook_tables(real_surface):
     assert t2 == pytest.approx(0.500, abs=1e-3)
     t3, p3 = diebold_mariano(errs["persistence"], errs["ar1_rolling252_huber"], "absolute")
     assert (t3, p3) == (pytest.approx(1.241, abs=1e-3), pytest.approx(0.215, abs=1e-3))
+
+
+def test_dm_table_p_holm_matches_hand_computation():
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2021-01-04", periods=200)
+    errs = {"persistence": _frame(idx) * rng.normal(size=(200, 1))}
+    for i, scale in enumerate([0.5, 0.8, 0.95]):
+        errs[f"m{i}"] = errs["persistence"] * scale + _frame(idx) * rng.normal(scale=0.3, size=(200, 1))
+    t = dm_table(errs, ["persistence"], ["m0", "m1", "m2"])
+    assert list(t.columns) == ["t_stat", "p_value", "p_holm"]
+    assert (t["p_holm"] >= t["p_value"]).all() and (t["p_holm"] <= 1).all()
+    for loss in ("absolute", "squared"):
+        p = t.xs(loss, level="loss")["p_value"].to_numpy()
+        m = len(p)
+        running, expected = 0.0, np.empty(m)
+        for rank, i in enumerate(np.argsort(p)):
+            running = max(running, min(1.0, (m - rank) * p[i]))
+            expected[i] = running
+        np.testing.assert_allclose(t.xs(loss, level="loss")["p_holm"], expected)
+
+
+def test_dm_table_p_holm_groups_by_reference_and_loss():
+    rng = np.random.default_rng(4)
+    idx = pd.bdate_range("2021-01-04", periods=100)
+    errs = {n: _frame(idx) * rng.normal(size=(100, 1)) for n in ["persistence", "a", "b"]}
+    both = dm_table(errs, ["persistence", "a"], ["b"])
+    alone = dm_table(errs, ["a"], ["b"])
+    np.testing.assert_allclose(both.loc[["a"], "p_holm"], alone["p_holm"])
+    # a single test per group: Holm leaves the p-value unchanged
+    np.testing.assert_allclose(alone["p_holm"], alone["p_value"])
