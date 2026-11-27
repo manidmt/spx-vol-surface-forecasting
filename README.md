@@ -97,6 +97,33 @@ is the best single network. The CNN + AR(1) ensemble was motivated by the earlie
 that the two models win in different regions of the surface, an observation made on this same
 test period; the four-model ensemble is free of that choice.
 
+**Model round 2** (simple exogenous inputs already on disk, see
+`docs/superpowers/plans/2026-11-27-model-round-2.md`): a *calendar* block (business days to the
+next scheduled FOMC decision, CPI and payrolls release, and whether one falls before the next
+session, from the schedule as it was known at each close, revisions included) and an *underlying*
+block (SPX return, its negative part, 5- and 21-day realised volatility, daily range). Each block
+enters the network through one zero-initialised linear layer added to its output. Same protocol,
+1,445 days common to these runs; Holm adjustment over the six exogenous runs against persistence
+and over the three variants of each network against that network:
+
+| Model | MAE | MAE vs persistence | DM p vs persistence (abs.) | Holm p | DM p vs same network without inputs (abs.) |
+|---|---|---|---|---|---|
+| 3D CNN, shared head | 0.4544 | −1.1 % | 0.052 | — | — |
+| + calendar | 0.4554 | −0.9 % | 0.119 | 0.227 | 0.504 (worse) |
+| + underlying | 0.4543 | −1.2 % | 0.042 | 0.179 | 0.924 |
+| + calendar + underlying | 0.4542 | −1.2 % | 0.036 | 0.179 | 0.877 |
+| ConvLSTM | 0.4527 | −1.5 % | 0.025 | — | — |
+| + calendar | 0.4548 | −1.1 % | 0.114 | 0.227 | 0.184 (worse) |
+| + underlying | 0.4540 | −1.2 % | 0.048 | 0.179 | 0.387 (worse) |
+| + calendar + underlying | 0.4537 | −1.3 % | 0.026 | 0.156 | 0.578 (worse) |
+
+Neither block improves on the same network without it, and no model is significant under squared
+loss. The underlying block shifts the gains from the short end to the long end of the surface
+(−1.1 % at 24 months against −0.4 % for the CNN alone, but −1.3 % instead of −1.7 % at 30 days).
+On the day of a scheduled payrolls release persistence errs more (MAE 0.57 against 0.44 on days
+with no scheduled event) and every network does worse than persistence there (+0.9 % to +3.2 %
+MAE, 69 days); the calendar block does not change this consistently.
+
 ## Repository layout
 
 ```
