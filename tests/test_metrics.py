@@ -71,6 +71,74 @@ def test_dm_table_shape():
     assert len(t) == 4
 
 
+def _actual_and_pred():
+    idx = pd.bdate_range("2021-01-04", periods=5)
+    rng = np.random.default_rng(2)
+    actual = _frame(idx) + rng.normal(size=(5, 4))
+    pred = _frame(idx) + rng.normal(size=(5, 4))
+    return actual, pred
+
+
+def test_errors_reject_duplicate_prediction_dates():
+    actual, pred = _actual_and_pred()
+    duplicated = pd.concat([pred, pred.iloc[[2]]]).sort_index()
+    with pytest.raises(ValueError, match="m.*duplicate dates"):
+        errors(actual, {"m": duplicated})
+    with pytest.raises(ValueError, match="m.*duplicate dates"):
+        common_mask(actual, {"m": duplicated})
+
+
+def test_errors_reject_duplicate_actual_dates():
+    actual, pred = _actual_and_pred()
+    with pytest.raises(ValueError, match="actual.*duplicate dates"):
+        errors(pd.concat([actual, actual.iloc[[0]]]).sort_index(), {"m": pred})
+
+
+def test_errors_reject_duplicate_columns():
+    actual, pred = _actual_and_pred()
+    doubled = pd.concat([pred, pred.iloc[:, [0]]], axis=1)
+    with pytest.raises(ValueError, match="m.*duplicate column"):
+        errors(actual, {"m": doubled})
+    with pytest.raises(ValueError, match="actual.*duplicate column"):
+        errors(pd.concat([actual, actual.iloc[:, [0]]], axis=1), {"m": pred})
+
+
+def test_errors_reject_missing_grid_point():
+    actual, pred = _actual_and_pred()
+    with pytest.raises(ValueError, match=r"m.*missing.*60DAY.*100"):
+        errors(actual, {"m": pred.drop(columns=[("60DAY", 100.0)])})
+    with pytest.raises(ValueError, match="m.*missing"):
+        common_mask(actual, {"m": pred.drop(columns=[("60DAY", 100.0)])})
+
+
+def test_errors_reject_extra_grid_point():
+    actual, pred = _actual_and_pred()
+    extra = pred.copy()
+    extra[("90DAY", 100.0)] = 1.0
+    with pytest.raises(ValueError, match=r"m.*extra.*90DAY"):
+        errors(actual, {"m": extra})
+
+
+def test_errors_align_reordered_grid_to_actual_order():
+    actual, pred = _actual_and_pred()
+    reordered = pred[pred.columns[::-1]]
+    out = errors(actual, {"m": reordered, "ref": pred})
+    assert out["m"].columns.equals(actual.columns)
+    pd.testing.assert_frame_equal(out["m"], out["ref"])
+
+
+def test_errors_reject_empty_common_sample():
+    actual, pred = _actual_and_pred()
+    later = pred.copy()
+    later.index = later.index + pd.Timedelta(days=30)
+    with pytest.raises(ValueError, match="no common"):
+        errors(actual, {"m": later})
+    all_nan = pred.copy()
+    all_nan.iloc[:, 0] = np.nan
+    with pytest.raises(ValueError, match="no common"):
+        errors(actual, {"m": all_nan})
+
+
 @pytest.mark.slow
 def test_reproduces_notebook_tables(real_surface):
     preds = pd.read_pickle(PREDS_PATH)

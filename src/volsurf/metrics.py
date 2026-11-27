@@ -9,8 +9,43 @@ import statsmodels.api as sm
 Loss = Literal["squared", "absolute"]
 
 
+def _check_labels(name: str, frame: pd.DataFrame) -> None:
+    if not frame.index.is_unique:
+        dupes = frame.index[frame.index.duplicated()].unique()
+        raise ValueError(f"{name}: duplicate dates {list(dupes[:5])}")
+    if not frame.columns.is_unique:
+        dupes = frame.columns[frame.columns.duplicated()].unique()
+        raise ValueError(f"{name}: duplicate column labels {list(dupes[:5])}")
+
+
+def align_to_actual(actual: pd.DataFrame, preds: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Validate the frames and return the predictions with their columns in ``actual``'s order.
+
+    Every frame must have unique dates and unique column labels, and every prediction must
+    cover exactly the grid points of ``actual`` (in any order). Raises ``ValueError`` naming
+    the offending frame otherwise.
+    """
+    _check_labels("actual", actual)
+    aligned = {}
+    for name, frame in preds.items():
+        _check_labels(name, frame)
+        missing = actual.columns.difference(frame.columns, sort=False)
+        extra = frame.columns.difference(actual.columns, sort=False)
+        if len(missing) or len(extra):
+            raise ValueError(
+                f"{name}: grid points differ from the actual surface "
+                f"(missing {list(missing)}, extra {list(extra)})"
+            )
+        aligned[name] = frame[actual.columns]
+    return aligned
+
+
 def common_mask(actual: pd.DataFrame, preds: dict[str, pd.DataFrame]) -> pd.Index:
-    """Dates present in `actual` and every prediction frame, with all values finite in each."""
+    """Dates present in `actual` and every prediction frame, with all values finite in each.
+
+    The frames are validated first (see ``align_to_actual``).
+    """
+    preds = align_to_actual(actual, preds)
     dates: pd.Index | None = None
     for frame in [actual, *preds.values()]:
         finite = frame.index[np.isfinite(frame.to_numpy(dtype=float)).all(axis=1)]
@@ -20,8 +55,15 @@ def common_mask(actual: pd.DataFrame, preds: dict[str, pd.DataFrame]) -> pd.Inde
 
 
 def errors(actual: pd.DataFrame, preds: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """`actual - prediction` for each model, restricted to the common mask."""
+    """`actual - prediction` for each model on the common mask, columns in `actual`'s order.
+
+    Raises ``ValueError`` if the frames are malformed (see ``align_to_actual``) or if no date
+    is common to all of them with finite values.
+    """
+    preds = align_to_actual(actual, preds)
     mask = common_mask(actual, preds)
+    if len(mask) == 0:
+        raise ValueError(f"no common dates with finite values across actual and {sorted(preds)}")
     return {name: (actual.loc[mask] - p.loc[mask]) for name, p in preds.items()}
 
 
