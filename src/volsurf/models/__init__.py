@@ -2,7 +2,7 @@
 
 from volsurf.models.base import Forecaster
 
-KINDS = ("persistence", "ar1", "cnn")
+KINDS = ("persistence", "ar1", "cnn", "convlstm")
 
 
 def build_model(kind: str, name: str, params: dict) -> Forecaster:
@@ -23,4 +23,8 @@ def build_model(kind: str, name: str, params: dict) -> Forecaster:
         from volsurf.models.cnn import make_cnn
 
         return make_cnn(name, **params)
+    if kind == "convlstm":
+        from volsurf.models.convlstm import make_convlstm
+
+        return make_convlstm(name, **params)
     raise ValueError(f"unknown model kind {kind!r}; valid kinds: {', '.join(KINDS)}")
