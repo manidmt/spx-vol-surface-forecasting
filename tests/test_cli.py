@@ -129,3 +129,57 @@ def test_evaluate_rejects_duplicate_run_names(tmp_path, synthetic_runs, capsys):
         evaluate.main([str(dirs[0]), str(dirs[1]), str(twin)])
     err = capsys.readouterr().err
     assert "persistence" in err and str(dirs[0]) in err and str(twin) in err
+
+
+@pytest.fixture
+def synthetic_data(monkeypatch, synthetic_surface):
+    monkeypatch.setattr(run, "load_surface", lambda include_holdout=False: synthetic_surface)
+
+
+def _config(tmp_path: Path, name: str, extra: str = "") -> Path:
+    config = tmp_path / "config.toml"
+    config.write_text(f'name = {json.dumps(name)}\nkind = "persistence"\ntest_start = "2020-01-01"\n{extra}')
+    return config
+
+
+@pytest.mark.parametrize("name", ["", ".", "..", "../escape", "a/b", "ABSOLUTE", "a\\b", ".hidden", "a b"])
+def test_run_rejects_unsafe_names(tmp_path, synthetic_data, capsys, name):
+    if name == "ABSOLUTE":
+        name = str(tmp_path / "absolute")  # inside tmp_path, so a regression cannot write elsewhere
+    runs_dir = tmp_path / "runs"
+    with pytest.raises(SystemExit):
+        run.main([str(_config(tmp_path, name)), "--runs-dir", str(runs_dir)])
+    assert "run name" in capsys.readouterr().err
+    assert not runs_dir.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.toml"]
+
+
+def _snapshot(run_dir: Path) -> dict[str, bytes]:
+    return {f.name: f.read_bytes() for f in sorted(run_dir.iterdir())}
+
+
+def test_failed_write_keeps_previous_run(tmp_path, synthetic_data, monkeypatch):
+    runs_dir = tmp_path / "runs"
+    run_dir = run.main([str(_config(tmp_path, "toy")), "--runs-dir", str(runs_dir)])
+    before = _snapshot(run_dir)
+
+    def broken_save(target: Path, *args) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "predictions.parquet").write_bytes(b"half written")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(run, "save_run", broken_save)
+    with pytest.raises(OSError, match="disk full"):
+        run.main([str(_config(tmp_path, "toy", "# second run\n")), "--runs-dir", str(runs_dir)])
+    assert _snapshot(run_dir) == before
+    assert [p.name for p in runs_dir.iterdir()] == ["toy"]  # no staging directory left behind
+
+
+def test_overwrite_publishes_complete_new_run(tmp_path, synthetic_data):
+    runs_dir = tmp_path / "runs"
+    run.main([str(_config(tmp_path, "toy")), "--runs-dir", str(runs_dir)])
+    config = _config(tmp_path, "toy", "# second run\n")
+    run_dir = run.main([str(config), "--runs-dir", str(runs_dir)])
+    assert (run_dir / "config.toml").read_text() == config.read_text()
+    assert sorted(p.name for p in run_dir.iterdir()) == ["config.toml", "meta.json", "predictions.parquet"]
+    assert [p.name for p in runs_dir.iterdir()] == ["toy"]
