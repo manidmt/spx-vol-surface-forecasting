@@ -124,6 +124,32 @@ On the day of a scheduled payrolls release persistence errs more (MAE 0.57 again
 with no scheduled event) and every network does worse than persistence there (+0.9 % to +3.2 %
 MAE, 69 days); the calendar block does not change this consistently.
 
+**Model round 3a** (cross-asset inputs from the first Bloomberg download, see
+`docs/superpowers/plans/2026-11-27-model-round-3a.md`), same linear branch, four blocks:
+*rates* (2- and 10-year Treasury and 10-year Bund changes, curve slope, change in the priced
+fed funds path, SOFR minus effective fed funds, both published the next morning and lagged a
+day), *credit* (IG and HY OAS changes, HYG implied vol), *cross-asset vol* (MOVE, OVX, EURUSD and
+USDJPY one-month ATM vol, USDJPY risk reversal) and *sectors* (mean and dispersion of the implied
+vols of the 11 SPDR sector ETFs, dispersion of their returns). Holm over the ten runs against
+persistence and over the five variants of each network against that network (absolute loss):
+
+| Inputs | CNN: MAE vs persistence | DM p vs CNN alone (Holm) | ConvLSTM: MAE vs persistence | DM p vs ConvLSTM alone (Holm) |
+|---|---|---|---|---|
+| none (round 1) | −1.1 % | — | −1.5 % | — |
+| rates | +0.3 % | 0.001 (0.004), worse | +0.1 % | < 0.001 (0.001), worse |
+| credit | −0.7 % | 0.234 (0.602) | −0.3 % | 0.026 (0.053), worse |
+| cross-asset vol | −0.7 % | 0.201 (0.602) | −0.4 % | 0.004 (0.012), worse |
+| sectors | −0.9 % | 0.304 (0.602) | −1.2 % | 0.330 (0.330) |
+| all four | +0.0 % | 0.017 (0.070), worse | +0.5 % | 0.001 (0.004), worse |
+
+No block helps and several make the networks significantly worse; none of the ten runs beats
+persistence significantly. The damage is largest early in the test period and fades as the
+training window grows (the ConvLSTM with rates loses 1.9 % against persistence in 2022 and gains
+3.0 % in 2026), the pattern of a linear map fitted on a short history whose relations do not hold
+in the next regime (2019-2020 for the first refits, then the 2022 hiking cycle). On the 5 % of
+days with the largest moves of the 30-day ATM vol (73 days, persistence MAE 1.96 against 0.38 on
+the rest) the ConvLSTM without exogenous inputs gains 3.0 %, more than any variant with them.
+
 ## Repository layout
 
 ```
