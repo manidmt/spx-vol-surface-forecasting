@@ -1,0 +1,6 @@
+name = "ens_all"
+kind = "ensemble"
+
+[params]
+members = ["cnn_conv_head", "lstm", "convlstm", "ar1_rolling252_huber"]
+weights = [0.25, 0.25, 0.25, 0.25]

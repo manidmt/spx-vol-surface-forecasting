@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from volsurf.data import load_surface
+from volsurf.ensemble import average_runs
 from volsurf.io import save_run
 from volsurf.models import build_model
 from volsurf.protocol import walk_forward
@@ -106,11 +107,19 @@ def main(argv: list[str] | None = None) -> Path:
         name = validate_run_name(config.get("name"))
     except ValueError as err:
         parser.error(str(err))
-    surface = load_surface(include_holdout=args.holdout)
-    model = build_model(config["kind"], name, config.get("params", {}))
-
+    params = config.get("params", {})
     start = time.perf_counter()
-    preds = walk_forward(model, surface, pd.Timestamp(config["test_start"]))
+    if config["kind"] == "ensemble":
+        # Averages saved forecasts from the same runs directory; no surface or fitting needed.
+        preds, members = average_runs(args.runs_dir, params["members"], params.get("weights"))
+        fit_log: object = []
+        extra = {"members": members}
+    else:
+        surface = load_surface(include_holdout=args.holdout)
+        model = build_model(config["kind"], name, params)
+        preds = walk_forward(model, surface, pd.Timestamp(config["test_start"]))
+        fit_log = _jsonable(model.fit_log)
+        extra = {}
     runtime = time.perf_counter() - start
 
     meta = {
@@ -118,7 +127,8 @@ def main(argv: list[str] | None = None) -> Path:
         "timestamp": datetime.now(UTC).isoformat(),
         "runtime_seconds": runtime,
         "include_holdout": args.holdout,
-        "fit_log": _jsonable(model.fit_log),
+        "fit_log": fit_log,
+        **extra,
     }
     json.dumps(meta)  # fail before touching the run directory if not serialisable
     if (args.runs_dir / name).exists():

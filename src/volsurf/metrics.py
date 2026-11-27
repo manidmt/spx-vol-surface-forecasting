@@ -5,6 +5,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from statsmodels.stats.multitest import multipletests
 
 Loss = Literal["squared", "absolute"]
 
@@ -131,7 +132,11 @@ def diebold_mariano(
 
 
 def dm_table(errs: dict[str, pd.DataFrame], references: list[str], models: list[str]) -> pd.DataFrame:
-    """Diebold-Mariano results for each (reference, model, loss) combination."""
+    """Diebold-Mariano results for each (reference, model, loss) combination.
+
+    ``p_holm`` is the Holm-adjusted p-value within each (reference, loss) group, i.e. over all
+    the models compared with that reference under that loss.
+    """
     rows = {}
     for ref in references:
         for model in models:
@@ -140,4 +145,7 @@ def dm_table(errs: dict[str, pd.DataFrame], references: list[str], models: list[
                 rows[(ref, model, loss)] = {"t_stat": t, "p_value": p}
     out = pd.DataFrame.from_dict(rows, orient="index")
     out.index = pd.MultiIndex.from_tuples(out.index, names=["reference", "model", "loss"])
+    out["p_holm"] = out.groupby(level=["reference", "loss"])["p_value"].transform(
+        lambda p: multipletests(p.to_numpy(), method="holm")[1]
+    )
     return out
