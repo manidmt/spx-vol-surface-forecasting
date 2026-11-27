@@ -15,11 +15,11 @@ class SpyForecaster(Forecaster):
 
     def __init__(self) -> None:
         super().__init__()
-        self.fit_ends: list[pd.Timestamp] = []
+        self.fit_indexes: list[pd.DatetimeIndex] = []
         self.predict_ends: list[pd.Timestamp] = []
 
     def fit(self, history: pd.DataFrame) -> None:
-        self.fit_ends.append(history.index[-1])
+        self.fit_indexes.append(history.index.copy())
 
     def predict_change(self, history: pd.DataFrame) -> np.ndarray:
         self.predict_ends.append(history.index[-1])
@@ -30,9 +30,12 @@ def test_fit_sees_only_past(synthetic_surface):
     spy = SpyForecaster()
     walk_forward(spy, synthetic_surface, test_start=TEST_START)
     schedule = refit_schedule(synthetic_surface.index, TEST_START)
-    assert len(spy.fit_ends) == len(schedule)
-    for last_seen, (refit_date, _) in zip(spy.fit_ends, schedule, strict=True):
-        assert last_seen < refit_date
+    index = synthetic_surface.index
+    assert len(spy.fit_indexes) == len(schedule)
+    for seen, (refit_date, _) in zip(spy.fit_indexes, schedule, strict=True):
+        # the full prefix, ending at the observation immediately before the refit date
+        pd.testing.assert_index_equal(seen, index[index < refit_date], check_exact=True)
+        assert seen[-1] == index[index.get_loc(refit_date) - 1]
 
 
 def test_predict_sees_up_to_previous_day(synthetic_surface):
@@ -69,3 +72,96 @@ def test_duplicate_date_raises(synthetic_surface):
     duplicated = pd.concat([synthetic_surface, synthetic_surface.iloc[[500]]]).sort_index()
     with pytest.raises(ValueError, match="unique"):
         walk_forward(SpyForecaster(), duplicated, test_start=TEST_START)
+
+
+def _base_chain(array: np.ndarray) -> list[np.ndarray]:
+    """``array`` and every array reachable through ``.base``."""
+    chain = []
+    while isinstance(array, np.ndarray):
+        chain.append(array)
+        array = array.base
+    return chain
+
+
+class IsolationSpy(Forecaster):
+    """Checks that every history it receives is a private copy bounded at its last row."""
+
+    name = "isolation_spy"
+
+    def __init__(self, surface: pd.DataFrame) -> None:
+        super().__init__()
+        self.full_values = surface.to_numpy()
+        self.full_dates = surface.index.asi8
+        self.calls = 0
+
+    def _check(self, history: pd.DataFrame) -> None:
+        values = history.to_numpy()
+        assert not np.shares_memory(values, self.full_values)
+        for array in (*_base_chain(values), *_base_chain(history.index.asi8)):
+            assert array.size <= history.size  # nothing beyond the last history row is reachable
+            assert not np.shares_memory(array, self.full_values)
+            assert not np.shares_memory(array, self.full_dates)
+        self.calls += 1
+
+    def fit(self, history: pd.DataFrame) -> None:
+        self._check(history)
+
+    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+        self._check(history)
+        return np.zeros(history.shape[1])
+
+
+def test_history_shares_no_storage_with_surface(synthetic_surface):
+    spy = IsolationSpy(synthetic_surface)
+    out = walk_forward(spy, synthetic_surface, test_start=TEST_START)
+    assert spy.calls == len(out) + len(refit_schedule(synthetic_surface.index, TEST_START))
+
+
+class Vandal(Forecaster):
+    """Overwrites every history it is given in place; forecasts no change."""
+
+    name = "vandal"
+
+    def fit(self, history: pd.DataFrame) -> None:
+        history.iloc[:, :] = 1e6
+
+    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+        history.iloc[:, :] = 1e6
+        return np.zeros(history.shape[1])
+
+
+def test_previous_level_independent_of_model_history(synthetic_surface):
+    original = synthetic_surface.copy()
+    out = walk_forward(Vandal(), synthetic_surface, test_start=TEST_START)
+    pd.testing.assert_frame_equal(synthetic_surface, original)
+    pd.testing.assert_frame_equal(out, original.shift(1).loc[out.index])
+
+
+def test_test_start_at_first_date_raises_before_fit(synthetic_surface):
+    spy = SpyForecaster()
+    with pytest.raises(ValueError, match="first date"):
+        walk_forward(spy, synthetic_surface, test_start=synthetic_surface.index[0])
+    assert spy.fit_indexes == []
+
+
+class FixedOutput(Forecaster):
+    """Returns the same (possibly malformed) change for every day."""
+
+    name = "fixed_output"
+
+    def __init__(self, change) -> None:
+        super().__init__()
+        self.change = change
+
+    def fit(self, history: pd.DataFrame) -> None:
+        pass
+
+    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+        return self.change
+
+
+@pytest.mark.parametrize("change", [0.0, np.zeros(1), np.zeros((1, 63)), np.zeros(62)])
+def test_wrong_output_shape_raises(synthetic_surface, change):
+    first_day = synthetic_surface.index[synthetic_surface.index >= TEST_START][0]
+    with pytest.raises(ValueError, match=rf"fixed_output.*{first_day.date()}.*\(63,\)"):
+        walk_forward(FixedOutput(change), synthetic_surface, test_start=TEST_START)
