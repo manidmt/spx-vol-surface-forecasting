@@ -79,11 +79,55 @@ the Bloomberg surface that reverts the next day.
 ## Repository layout
 
 ```
-notebooks/        numbered analysis notebooks
+src/volsurf/      experiment framework (see below)
+configs/          one TOML file per experiment
+tests/            pytest suite
+notebooks/        numbered analysis notebooks (01-06 are the historical record of the first stage)
+docs/             design notes and implementation plans
 data/             not included (see below)
 pyproject.toml    dependencies (managed with uv)
 uv.lock
 ```
+
+## Experiment framework
+
+Every model runs under one walk-forward protocol, implemented once in `src/volsurf/`:
+
+```
+data.py            load the clean surface; drop the hold-out period unless asked
+protocol.py        monthly refit schedule and the walk-forward runner
+models/base.py     Forecaster interface: fit(history) and predict_change(history)
+models/baselines.py  persistence and per-point AR(1) with Huber loss
+models/torch_base.py shared network trainer (Huber loss, AdamW, early stopping, seed ensemble)
+models/cnn.py      3D convolutional network over (days × tenor × moneyness)
+metrics.py         MAE/RMSE by tenor and point, R² OOS, Diebold-Mariano
+run.py, evaluate.py  command-line entry points
+```
+
+**Timing convention.** The surface of day *t* is forecast with information up to the close of
+*t−1*. Models predict the change over the last observed surface and the runner adds it back, so a
+model that predicts zero is persistence. The runner refits each model on the first test day of every
+month using only earlier dates, and asks for each day's forecast with history up to the previous
+day: a model cannot see future data even if it has a bug. A test checks this for every model by
+replacing all data after a date with noise and requiring identical forecasts up to that date.
+
+**Running experiments.**
+
+```bash
+uv run python -m volsurf.run configs/cnn_conv_head.toml      # writes runs/cnn_conv_head/
+uv run python -m volsurf.evaluate runs/persistence runs/cnn_conv_head
+```
+
+Each run saves its predictions (`predictions.parquet`), a copy of its config and metadata (git
+commit, runtime, epochs per refit). `evaluate` compares any set of runs on the days they all cover.
+Dates from 2026-10-08 onwards are a clean hold-out: both commands drop them unless `--holdout` is
+passed.
+
+**Adding a model.** A network is one `nn.Module` plus a factory like `make_cnn` and a registry entry
+in `models/__init__.py`; any other model subclasses `Forecaster`. Then add a TOML config.
+
+**Tests.** `uv run pytest` runs the suite; tests that need the (private) data are marked `slow` and
+skipped when the data are missing.
 
 ## Data
 
