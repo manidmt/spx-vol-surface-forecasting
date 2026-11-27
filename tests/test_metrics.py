@@ -208,3 +208,22 @@ def test_dm_table_p_holm_groups_by_reference_and_loss():
     np.testing.assert_allclose(both.loc[["a"], "p_holm"], alone["p_holm"])
     # a single test per group: Holm leaves the p-value unchanged
     np.testing.assert_allclose(alone["p_holm"], alone["p_value"])
+
+
+def test_dm_table_holm_ignores_nan_p_values():
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range("2021-01-04", periods=100)
+    errs = {n: _frame(idx) * rng.normal(size=(100, 1)) for n in ["persistence", "a", "b"]}
+    errs["const"] = _frame(idx) * 0.0 + 1.0  # identical loss to a constant: zero-variance difference
+    errs["persistence"] = errs["const"]
+    t = dm_table(errs, ["persistence"], ["const", "a", "b"])
+    nan_rows = t["p_value"].isna()
+    assert nan_rows.any() and (~nan_rows).any()
+    assert t.loc[nan_rows, "p_holm"].isna().all()
+    valid = t.loc[~nan_rows]
+    assert valid["p_holm"].notna().all()
+    for loss in ("absolute", "squared"):
+        v = valid.xs(loss, level="loss")
+        # two valid tests in the family: smallest p is multiplied by 2, the largest by 1
+        expected = np.minimum(1.0, np.maximum.accumulate(np.sort(v["p_value"].to_numpy()) * [2, 1]))
+        np.testing.assert_allclose(np.sort(v["p_holm"].to_numpy()), expected)

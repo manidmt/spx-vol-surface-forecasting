@@ -131,11 +131,21 @@ def diebold_mariano(
     return float(res.tvalues[0]), float(res.pvalues[0])
 
 
+def _holm_ignoring_nan(p: pd.Series) -> pd.Series:
+    adjusted = pd.Series(np.nan, index=p.index)
+    valid = p.notna().to_numpy()
+    if valid.any():
+        adjusted[valid] = multipletests(p.to_numpy()[valid], method="holm")[1]
+    return adjusted
+
+
 def dm_table(errs: dict[str, pd.DataFrame], references: list[str], models: list[str]) -> pd.DataFrame:
     """Diebold-Mariano results for each (reference, model, loss) combination.
 
     ``p_holm`` is the Holm-adjusted p-value within each (reference, loss) group, i.e. over all
-    the models compared with that reference under that loss.
+    the models compared with that reference under that loss. NaN p-values are left out of the
+    adjustment (they stay NaN). Because the family is every model in the table, ``p_holm``
+    depends on the set of models passed: adding or removing a model changes it.
     """
     rows = {}
     for ref in references:
@@ -145,7 +155,5 @@ def dm_table(errs: dict[str, pd.DataFrame], references: list[str], models: list[
                 rows[(ref, model, loss)] = {"t_stat": t, "p_value": p}
     out = pd.DataFrame.from_dict(rows, orient="index")
     out.index = pd.MultiIndex.from_tuples(out.index, names=["reference", "model", "loss"])
-    out["p_holm"] = out.groupby(level=["reference", "loss"])["p_value"].transform(
-        lambda p: multipletests(p.to_numpy(), method="holm")[1]
-    )
+    out["p_holm"] = out.groupby(level=["reference", "loss"])["p_value"].transform(_holm_ignoring_nan)
     return out
