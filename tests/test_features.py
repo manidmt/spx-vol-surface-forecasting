@@ -28,6 +28,8 @@ ECO_2025 = (
     "NFP TCH Index,2025-10-31,-140,-25,2025-12-16\n"
     "NFP TCH Index,2025-11-30,41,50,2025-12-16\n"
     "NFP TCH Index,2025-12-31,-17,70,2026-01-09\n"
+    "CPI CHNG Index,2026-01-31,0.2,0.3,2026-02-13\n"
+    "NFP TCH Index,2026-01-31,130,70,2026-02-11\n"
 )
 SCHEDULE_COLUMNS = ["event", "date", "known_from", "withdrawn_from"]
 
@@ -98,11 +100,19 @@ def test_load_event_schedule_revisions(eco_2025: Path) -> None:
     ]:
         original = _entry(schedule, event, date)
         assert (original["known_from"], original["withdrawn_from"]) == (pd.Timestamp.min, lapse)
+    for event, date in [("cpi", "2026-02-11"), ("nfp", "2026-02-06")]:
+        original = _entry(schedule, event, date)
+        assert (original["known_from"], original["withdrawn_from"]) == (
+            pd.Timestamp.min,
+            pd.Timestamp("2026-01-31"),
+        )
     for event, date, known_from in [
         ("cpi", "2025-10-24", "2025-10-10"),
-        ("cpi", "2025-12-18", "2025-12-17"),
+        ("cpi", "2025-12-18", "2025-12-11"),
         ("nfp", "2025-11-20", "2025-11-19"),
-        ("nfp", "2025-12-16", "2025-12-15"),
+        ("nfp", "2025-12-16", "2025-12-11"),
+        ("cpi", "2026-02-13", "2026-02-04"),
+        ("nfp", "2026-02-11", "2026-02-04"),
     ]:
         revised = _entry(schedule, event, date)
         assert (revised["known_from"], revised["withdrawn_from"]) == (
@@ -207,13 +217,30 @@ def test_calendar_features_2025_lapse(eco_2025: Path) -> None:
     assert out.loc["2025-10-10", "cpi_days_to_next"] == np.busday_count("2025-10-10", "2025-10-24")
     assert out.loc["2025-10-23", "cpi_next"] == 1
     # Revised releases without an announcement date are known from the business day before.
-    assert out.loc["2025-12-16", "cpi_next"] == 0
-    assert out.loc["2025-12-17", "cpi_next"] == 1
-    assert out.loc["2025-12-17", "cpi_days_to_next"] == 1
     assert out.loc["2025-11-18", "nfp_next"] == 0
     assert out.loc["2025-11-19", "nfp_next"] == 1
-    assert out.loc["2025-12-12", "nfp_next"] == 0
+    # The December revised releases are known from the schedule update of 11 December.
+    assert out.loc["2025-12-10", "nfp_days_to_next"] == np.busday_count("2025-12-10", "2026-01-09")
+    assert out.loc["2025-12-11", "nfp_days_to_next"] == np.busday_count("2025-12-11", "2025-12-16")
+    assert out.loc["2025-12-11", "cpi_days_to_next"] == np.busday_count("2025-12-11", "2025-12-18")
     assert out.loc["2025-12-15", "nfp_next"] == 1
+    assert out.loc["2025-12-17", "cpi_next"] == 1
+
+
+def test_calendar_features_2026_lapse(eco_2025: Path) -> None:
+    index = pd.bdate_range("2026-01-26", "2026-02-27", name="date")
+    out = features.calendar_features(index, features.load_event_schedule(eco_2025))
+    # Before the 2026 lapse the original February releases are still scheduled.
+    assert out.loc["2026-01-30", "nfp_days_to_next"] == np.busday_count("2026-01-30", "2026-02-06")
+    assert out.loc["2026-01-30", "cpi_days_to_next"] == np.busday_count("2026-01-30", "2026-02-11")
+    # Withdrawn from the lapse; the revised dates are public from 4 February.
+    assert out.loc["2026-02-03", "nfp_next"] == 0
+    assert np.isnan(out.loc["2026-02-03", "nfp_days_to_next"])
+    assert out.loc["2026-02-04", "nfp_days_to_next"] == np.busday_count("2026-02-04", "2026-02-11")
+    assert out.loc["2026-02-04", "cpi_days_to_next"] == np.busday_count("2026-02-04", "2026-02-13")
+    assert out.loc["2026-02-05", "nfp_next"] == 0
+    assert out.loc["2026-02-10", "nfp_next"] == 1
+    assert out.loc["2026-02-12", "cpi_next"] == 1
 
 
 def test_calendar_features_march_2020_fomc(eco_2025: Path) -> None:

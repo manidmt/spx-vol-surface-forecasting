@@ -2,24 +2,31 @@
 # An entry is active at the close of d iff known_from <= d < withdrawn_from; an empty bound is unbounded.
 # Every event date absent from this file is a final date that was always known and never withdrawn.
 # Conservative convention (can only under-state what was known at a close, never leak):
-# - releases withdrawn by the 2025 lapse in appropriations: withdrawn_from = 2025-10-01, the assumed
-#   first day of the lapse (start of fiscal year 2026; not stated on BLS pages A or B, retrieved 2026-11-27);
-# - revised releases without a published announcement date: known_from = business day before the release.
+# - releases withdrawn by a lapse in appropriations: withdrawn_from = the assumed first day of the lapse
+#   (2025-10-01, start of fiscal year 2026; 2026-01-31; neither is stated on the BLS pages A, B or F);
+# - revised releases: known_from = the last-modified date of the BLS schedule section that lists them
+#   (F, G), else the business day before the release.
 # Sources (retrieved 2026-11-27):
 # A https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm
 # B https://www.bls.gov/bls/092025-cpi-reschedule-notice.htm (page last modified 2025-10-10)
 # C https://www.bls.gov/news.release/archives/cpi_09112025.htm
 # D https://www.federalreserve.gov/monetarypolicy/fomchistorical2020.htm
 # E https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm
+# F https://www.bls.gov/schedule/2026/ (February 2026 section last modified 2026-02-04)
+# G https://www.bls.gov/schedule/2025/ (December 2025 section last modified 2025-12-11)
 event,date,known_from,withdrawn_from,note,source
 fomc,2020-03-18,,2020-03-15,March 17-18 meeting cancelled; replaced by the unscheduled meeting of 2020-03-15,D E
 cpi,2025-10-15,,2025-10-01,September 2025 CPI original date; withdrawn by the lapse,C
 cpi,2025-10-24,2025-10-10,,September 2025 CPI rescheduled; announced 2025-10-10,A B
 cpi,2025-11-13,,2025-10-01,October 2025 CPI original date; cancelled,A
 cpi,2025-12-10,,2025-10-01,November 2025 CPI original date; withdrawn by the lapse,A
-cpi,2025-12-18,2025-12-17,,November 2025 CPI revised date; no announcement date; missing from the Bloomberg export,A
+cpi,2025-12-18,2025-12-11,,November 2025 CPI revised date; missing from the Bloomberg export,A G
 nfp,2025-10-03,,2025-10-01,September 2025 Employment Situation original date; withdrawn by the lapse,A
 nfp,2025-11-07,,2025-10-01,October 2025 Employment Situation original date; cancelled,A
 nfp,2025-11-20,2025-11-19,,September 2025 Employment Situation revised date; no announcement date,A
 nfp,2025-12-05,,2025-10-01,November 2025 Employment Situation original date; withdrawn by the lapse,A
-nfp,2025-12-16,2025-12-15,,November 2025 Employment Situation revised date; no announcement date,A
+nfp,2025-12-16,2025-12-11,,November 2025 Employment Situation revised date,A G
+cpi,2026-02-11,,2026-01-31,January 2026 CPI original date; withdrawn by the 2026 lapse,A
+cpi,2026-02-13,2026-02-04,,January 2026 CPI revised date,A F
+nfp,2026-02-06,,2026-01-31,January 2026 Employment Situation original date; withdrawn by the 2026 lapse,A
+nfp,2026-02-11,2026-02-04,,January 2026 Employment Situation revised date,A F
