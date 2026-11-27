@@ -76,8 +76,9 @@ def test_load_event_schedule(tmp_path: Path) -> None:
         (schedule["known_from"] == pd.Timestamp.min) & (schedule["withdrawn_from"] == pd.Timestamp.max)
     ]
     by_event = {name: pd.DatetimeIndex(group["date"]) for name, group in always.groupby("event")}
-    assert by_event["cpi"].tolist() == list(pd.to_datetime(["2024-02-13", "2024-03-12"]))
-    assert by_event["nfp"].tolist() == list(pd.to_datetime(["2024-02-02", "2024-03-08"]))
+    # The January 2019 releases missing from the export come from the revisions resource.
+    assert by_event["cpi"].tolist() == list(pd.to_datetime(["2019-01-11", "2024-02-13", "2024-03-12"]))
+    assert by_event["nfp"].tolist() == list(pd.to_datetime(["2019-01-04", "2024-02-02", "2024-03-08"]))
     assert by_event["fomc"].is_monotonic_increasing
     assert by_event["fomc"][0] == pd.Timestamp("2019-01-30")
     assert by_event["fomc"][-1] == pd.Timestamp("2026-12-09")
@@ -108,9 +109,9 @@ def test_load_event_schedule_revisions(eco_2025: Path) -> None:
         )
     for event, date, known_from in [
         ("cpi", "2025-10-24", "2025-10-10"),
-        ("cpi", "2025-12-18", "2025-12-11"),
+        ("cpi", "2025-12-18", "2025-11-24"),
         ("nfp", "2025-11-20", "2025-11-19"),
-        ("nfp", "2025-12-16", "2025-12-11"),
+        ("nfp", "2025-12-16", "2025-11-20"),
         ("cpi", "2026-02-13", "2026-02-04"),
         ("nfp", "2026-02-11", "2026-02-04"),
     ]:
@@ -219,10 +220,11 @@ def test_calendar_features_2025_lapse(eco_2025: Path) -> None:
     # Revised releases without an announcement date are known from the business day before.
     assert out.loc["2025-11-18", "nfp_next"] == 0
     assert out.loc["2025-11-19", "nfp_next"] == 1
-    # The December revised releases are known from the schedule update of 11 December.
-    assert out.loc["2025-12-10", "nfp_days_to_next"] == np.busday_count("2025-12-10", "2026-01-09")
-    assert out.loc["2025-12-11", "nfp_days_to_next"] == np.busday_count("2025-12-11", "2025-12-16")
-    assert out.loc["2025-12-11", "cpi_days_to_next"] == np.busday_count("2025-12-11", "2025-12-18")
+    # The December revised releases are known from their first verified public sources.
+    assert out.loc["2025-11-19", "nfp_days_to_next"] == np.busday_count("2025-11-19", "2025-11-20")
+    assert out.loc["2025-11-20", "nfp_days_to_next"] == np.busday_count("2025-11-20", "2025-12-16")
+    assert out.loc["2025-11-21", "cpi_days_to_next"] == np.busday_count("2025-11-21", "2026-01-13")
+    assert out.loc["2025-11-24", "cpi_days_to_next"] == np.busday_count("2025-11-24", "2025-12-18")
     assert out.loc["2025-12-15", "nfp_next"] == 1
     assert out.loc["2025-12-17", "cpi_next"] == 1
 
@@ -325,10 +327,10 @@ def test_features_real(real_surface: pd.DataFrame) -> None:
     expected = {
         # The scheduled March 2020 FOMC meeting was cancelled.
         "fomc": [8, 7, 8, 8, 8, 8, 8, 8],
-        # The local macro export has truncated edge years; October 2025 CPI was cancelled.
-        "cpi": [11, 12, 12, 12, 12, 12, 11, 10],
+        # The export is truncated in 2026; October 2025 CPI was cancelled.
+        "cpi": [12, 12, 12, 12, 12, 12, 11, 10],
         # Two 2025 payroll periods share a single December release date.
-        "nfp": [11, 12, 12, 12, 12, 12, 11, 11],
+        "nfp": [12, 12, 12, 12, 12, 12, 11, 11],
     }
     # Count the final dates: entries that were never withdrawn.
     schedule = features.load_event_schedule()
