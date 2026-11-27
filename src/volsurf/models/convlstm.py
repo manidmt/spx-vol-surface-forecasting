@@ -17,8 +17,10 @@ class ConvLSTMCell(nn.Module):
     """One time step of a ConvLSTM on a 2D grid.
 
     A single ``Conv2d`` over the concatenated input and previous hidden state produces the four
-    gates at once (input, forget, output, candidate), exactly as Keras' ``ConvLSTM2D`` does
-    with its ``kernel`` and ``recurrent_kernel``. Padding ``kernel_size // 2`` keeps the grid
+    gates at once (input, forget, output, candidate), ≈ Keras' ``ConvLSTM2D`` with its
+    ``kernel`` and ``recurrent_kernel``. Differences a Keras user would notice: gate order,
+    forget-bias initialisation (Keras ``unit_forget_bias=True``, here none) and a single bias
+    vector in the conv (PyTorch's ``nn.LSTM`` has two). Padding ``kernel_size // 2`` keeps the grid
     size (≈ ``padding="same"`` for odd kernels).
 
     ``forward(x, (h, c))`` takes ``x`` of shape ``(batch, in_channels, height, width)`` and the

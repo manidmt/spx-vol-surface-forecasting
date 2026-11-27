@@ -57,7 +57,9 @@ def test_convlstm_no_leakage(synthetic_surface):
 
 
 def test_build_model_convlstm():
-    model = build_model("convlstm", "x", {"hidden_channels": 4, "kernel_size": 3, "lookback": 5, "seeds": 1})
+    model = build_model(
+        "convlstm", "x", {"hidden_channels": 4, "kernel_size": 3, "lookback": 5, "seeds": 1, "device": "cpu"}
+    )
     assert isinstance(model, TorchForecaster)
     assert model.name == "x"
     assert model.lookback == 5

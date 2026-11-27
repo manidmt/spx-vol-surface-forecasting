@@ -19,7 +19,10 @@ class SurfaceLSTM(nn.Module):
     def __init__(self, n_tenors: int, n_moneyness: int, hidden: int = 64) -> None:
         super().__init__()
         n_points = n_tenors * n_moneyness
-        # batch_first=True uses Keras LSTM's (batch, time, features) input layout.
+        # batch_first=True uses Keras LSTM's (batch, time, features) input layout. Differences a
+        # Keras user would notice: gate order (PyTorch i,f,g,o; Keras i,f,c,o with other weight
+        # layout), forget-bias init (Keras unit_forget_bias=True, PyTorch none) and two bias
+        # vectors (b_ih and b_hh) in PyTorch.
         self.lstm = nn.LSTM(2 * n_points, hidden, num_layers=1, batch_first=True)
         # nn.Linear(hidden, n_points) ≈ Dense(n_points, kernel_initializer="zeros", bias_initializer="zeros")
         self.head = nn.Linear(hidden, n_points)
@@ -31,7 +34,7 @@ class SurfaceLSTM(nn.Module):
         # Like transposing before Keras TimeDistributed(Flatten): keep batch and day separate.
         daily_features = x.permute(0, 2, 1, 3, 4).flatten(start_dim=2)
         # PyTorch returns the sequence and (hidden, cell) states. The last layer's final hidden
-        # state matches the output of a single Keras LSTM with return_sequences=False.
+        # state ≈ the output of a single Keras LSTM with return_sequences=False.
         _, (hidden, _) = self.lstm(daily_features)
         return self.head(hidden[-1])
 
