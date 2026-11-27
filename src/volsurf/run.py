@@ -15,7 +15,7 @@ import pandas as pd
 from volsurf.data import load_surface
 from volsurf.ensemble import average_runs
 from volsurf.io import save_run, validate_run_name
-from volsurf.models import build_model
+from volsurf.models import NEURAL_KINDS, build_model
 from volsurf.protocol import walk_forward
 
 
@@ -75,6 +75,28 @@ def _jsonable(value):
     return value
 
 
+def _split_exog(kind: str, params: dict) -> tuple[list[str] | None, dict]:
+    """Split the optional ``exog`` list of input blocks off a config's model ``params``.
+
+    Returns ``(blocks, remaining params)``, with ``blocks`` None when the config has no
+    ``exog``. Raises ``ValueError`` if ``exog`` is given for a non-neural kind, is not a
+    non-empty list of block names, or comes with an explicit ``n_exog`` (set from the panel).
+    """
+    if "exog" not in params:
+        return None, params
+    params = dict(params)
+    blocks = params.pop("exog")
+    if kind not in NEURAL_KINDS:
+        raise ValueError(
+            f"exog is only supported by the neural kinds {', '.join(NEURAL_KINDS)}, not {kind!r}"
+        )
+    if not (isinstance(blocks, list) and blocks and all(isinstance(b, str) for b in blocks)):
+        raise ValueError(f"exog must be a non-empty list of block names, got {blocks!r}")
+    if "n_exog" in params:
+        raise ValueError("n_exog is set from the exog panel; remove it from params")
+    return blocks, params
+
+
 def main(argv: list[str] | None = None) -> Path:
     """Walk-forward a configured model over the surface and save the run; returns its directory."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -100,12 +122,20 @@ def main(argv: list[str] | None = None) -> Path:
             raise ValueError("--holdout contradicts the ensemble members, which exclude the hold-out")
         extra = {"members": members}
     else:
+        blocks, params = _split_exog(config["kind"], params)
         holdout = args.holdout
         surface = load_surface(include_holdout=holdout)
+        exog, extra = None, {}
+        if blocks is not None:
+            # imported here so that runs without exogenous inputs do not need the features module
+            from volsurf.features import build_exog
+
+            exog = build_exog(blocks, surface.index)
+            params = {**params, "n_exog": exog.shape[1]}
+            extra = {"exog": {"blocks": blocks, "features": [str(c) for c in exog.columns]}}
         model = build_model(config["kind"], name, params)
-        preds = walk_forward(model, surface, pd.Timestamp(config["test_start"]))
+        preds = walk_forward(model, surface, pd.Timestamp(config["test_start"]), exog=exog)
         fit_log = _jsonable(model.fit_log)
-        extra = {}
     runtime = time.perf_counter() - start
 
     meta = {

@@ -3,6 +3,7 @@
 from volsurf.models.base import Forecaster
 
 KINDS = ("persistence", "ar1", "cnn", "lstm", "convlstm")
+NEURAL_KINDS = ("cnn", "lstm", "convlstm")  # trained by TorchForecaster; accept exogenous inputs
 
 
 def build_model(kind: str, name: str, params: dict) -> Forecaster:
