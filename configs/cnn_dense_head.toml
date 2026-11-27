@@ -1,0 +1,8 @@
+name = "cnn_dense_head"
+kind = "cnn"
+test_start = "2021-01-01"
+
+[params]
+head = "dense"
+lookback = 5
+seeds = 5

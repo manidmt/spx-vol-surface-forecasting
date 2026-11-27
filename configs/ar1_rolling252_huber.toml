@@ -1,0 +1,6 @@
+name = "ar1_rolling252_huber"
+kind = "ar1"
+test_start = "2021-01-01"
+
+[params]
+window = 252
