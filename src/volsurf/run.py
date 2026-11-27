@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import time
@@ -15,26 +14,9 @@ import pandas as pd
 
 from volsurf.data import load_surface
 from volsurf.ensemble import average_runs
-from volsurf.io import save_run
+from volsurf.io import save_run, validate_run_name
 from volsurf.models import build_model
 from volsurf.protocol import walk_forward
-
-_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-
-
-def validate_run_name(name: object) -> str:
-    """Return ``name`` if it is a safe single directory name, else raise ``ValueError``.
-
-    Allowed: letters, digits, ``.``, ``_`` and ``-``, not starting with ``.``. This rules out
-    empty names, path separators, ``.``/``..`` and absolute paths, so a run always lands
-    directly under the runs directory.
-    """
-    if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
-        raise ValueError(
-            f"run name {name!r} must be a single directory name made of letters, digits, "
-            "'.', '_' or '-', not starting with '.'"
-        )
-    return name
 
 
 def publish_run(runs_dir: Path, name: str, preds: pd.DataFrame, config: dict, meta: dict) -> Path:
@@ -113,9 +95,13 @@ def main(argv: list[str] | None = None) -> Path:
         # Averages saved forecasts from the same runs directory; no surface or fitting needed.
         preds, members = average_runs(args.runs_dir, params["members"], params.get("weights"))
         fit_log: object = []
+        holdout = members[0]["include_holdout"]
+        if args.holdout and not holdout:
+            raise ValueError("--holdout contradicts the ensemble members, which exclude the hold-out")
         extra = {"members": members}
     else:
-        surface = load_surface(include_holdout=args.holdout)
+        holdout = args.holdout
+        surface = load_surface(include_holdout=holdout)
         model = build_model(config["kind"], name, params)
         preds = walk_forward(model, surface, pd.Timestamp(config["test_start"]))
         fit_log = _jsonable(model.fit_log)
@@ -126,7 +112,7 @@ def main(argv: list[str] | None = None) -> Path:
         "commit": _git_commit(),
         "timestamp": datetime.now(UTC).isoformat(),
         "runtime_seconds": runtime,
-        "include_holdout": args.holdout,
+        "include_holdout": holdout,
         "fit_log": fit_log,
         **extra,
     }

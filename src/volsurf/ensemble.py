@@ -1,11 +1,12 @@
 """Equal- or weighted-average ensembles of saved runs (no refitting)."""
 
+import tomllib
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from volsurf.io import load_run
+from volsurf.io import load_run, validate_run_name
 
 
 def average_runs(
@@ -15,11 +16,11 @@ def average_runs(
 
     Weights default to equal; they must be non-negative, one per member, and sum to 1. All
     members must share the index and columns (same order) of the first one, else
-    ``ValueError`` naming the offending member. Returns the averaged forecast and
-    ``{"name", "commit", "timestamp"}`` for each member, in order.
+    ``ValueError`` naming the offending member. Members must also agree on ``include_holdout``
+    (from ``meta.json``) and ``test_start`` (from ``config.toml``), else ``ValueError``.
+    Returns the averaged forecast and ``{"name", "commit", "timestamp", "include_holdout",
+    "test_start"}`` for each member, in order.
     """
-    from volsurf.run import validate_run_name  # deferred: run imports this module
-
     if not members:
         raise ValueError("an ensemble needs at least one member (members is empty)")
     if weights is None:
@@ -41,6 +42,21 @@ def average_runs(
             if not preds.columns.equals(total.columns):
                 raise ValueError(f"member {name!r} has different columns from {first!r}")
             total = total + preds * weight
-        info.append({"name": name, "commit": meta.get("commit"), "timestamp": meta.get("timestamp")})
+        test_start = tomllib.loads((runs_dir / name / "config.toml").read_text()).get("test_start")
+        info.append(
+            {
+                "name": name,
+                "commit": meta.get("commit"),
+                "timestamp": meta.get("timestamp"),
+                "include_holdout": bool(meta.get("include_holdout", False)),
+                "test_start": None if test_start is None else str(test_start),
+            }
+        )
+        for key in ("include_holdout", "test_start"):
+            if info[-1][key] != info[0][key]:
+                raise ValueError(
+                    f"member {name!r} has {key}={info[-1][key]!r} but {info[0]['name']!r} "
+                    f"has {info[0][key]!r}; ensemble members must agree"
+                )
     assert total is not None
     return total, info

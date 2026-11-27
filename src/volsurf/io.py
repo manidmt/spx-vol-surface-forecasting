@@ -1,9 +1,27 @@
 """Saving and loading of run directories (predictions, config copy, metadata)."""
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
+
+_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def validate_run_name(name: object) -> str:
+    """Return ``name`` if it is a safe single directory name, else raise ``ValueError``.
+
+    Allowed: letters, digits, ``.``, ``_`` and ``-``, not starting with ``.``. This rules out
+    empty names, path separators, ``.``/``..`` and absolute paths, so a run always lands
+    directly under the runs directory.
+    """
+    if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
+        raise ValueError(
+            f"run name {name!r} must be a single directory name made of letters, digits, "
+            "'.', '_' or '-', not starting with '.'"
+        )
+    return name
 
 
 def save_run(run_dir: Path, preds: pd.DataFrame, config: dict, meta: dict) -> None:
