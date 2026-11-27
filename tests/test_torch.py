@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from leakage import assert_no_leakage
+from leakage import assert_no_leakage, leakage_dates
 
 from volsurf.models.cnn import SurfaceCNN, make_cnn
 from volsurf.models.torch_base import make_windows
@@ -35,8 +35,8 @@ def test_untrained_cnn_is_persistence(head):
 
 
 def test_cnn_no_leakage(synthetic_surface):
-    cutoff = pd.Timestamp("2020-08-31")
-    assert_no_leakage(tiny_cnn, synthetic_surface, cutoff, TEST_START)
+    surface = synthetic_surface.loc[:"2020-08-31"]  # three refits
+    assert_no_leakage(tiny_cnn, surface, TEST_START, leakage_dates(surface, TEST_START))
 
 
 def test_cnn_fit_log(synthetic_surface):

@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from leakage import assert_no_leakage
+from leakage import assert_no_leakage, leakage_dates
 
 from volsurf.models.baselines import AR1Huber, Persistence
 from volsurf.protocol import walk_forward
@@ -24,13 +24,13 @@ def test_ar1_matches_notebook(real_surface):
 
 
 def test_persistence_no_leakage(synthetic_surface):
-    cutoff = synthetic_surface.index[449]
-    assert_no_leakage(Persistence, synthetic_surface, cutoff, TEST_START)
+    dates = [*leakage_dates(synthetic_surface, TEST_START), synthetic_surface.index[449]]
+    assert_no_leakage(Persistence, synthetic_surface, TEST_START, dates)
 
 
 def test_ar1_no_leakage(synthetic_surface):
-    cutoff = synthetic_surface.index[449]
-    assert_no_leakage(lambda: AR1Huber(252), synthetic_surface, cutoff, TEST_START)
+    surface = synthetic_surface.loc[:"2020-04-30"]  # three refits are enough and keep the test fast
+    assert_no_leakage(lambda: AR1Huber(252), surface, TEST_START, leakage_dates(surface, TEST_START))
 
 
 def test_ar1_survives_nan_row(synthetic_surface):
