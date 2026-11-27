@@ -9,6 +9,8 @@ from volsurf.metrics import (
     errors,
     mae_by_point,
     mae_by_tenor,
+    rmse_by_point,
+    rmse_by_tenor,
     summary,
 )
 
@@ -48,6 +50,19 @@ def test_by_tenor_and_point_preserve_order():
     errs = {"m": pd.DataFrame(1.0, index=idx, columns=cols)}
     assert list(mae_by_tenor(errs).columns) == ["60DAY", "30DAY"]
     assert mae_by_point(errs).index.equals(cols)
+
+
+def test_rmse_by_tenor_and_point_hand_case():
+    idx = pd.bdate_range("2021-01-04", periods=2)
+    cols = pd.MultiIndex.from_product([["60DAY", "30DAY"], [100.0, 90.0]], names=["tenor", "moneyness"])
+    e = pd.DataFrame([[1.0, 3.0, 0.0, 2.0], [1.0, -1.0, 0.0, 0.0]], index=idx, columns=cols)
+    by_tenor = rmse_by_tenor({"m": e})
+    assert list(by_tenor.columns) == ["60DAY", "30DAY"]
+    assert by_tenor.loc["m", "60DAY"] == pytest.approx(np.sqrt(12 / 4))
+    assert by_tenor.loc["m", "30DAY"] == pytest.approx(np.sqrt(4 / 4))
+    by_point = rmse_by_point({"m": e})
+    assert by_point.index.equals(cols)
+    np.testing.assert_allclose(by_point["m"], np.sqrt([1.0, 5.0, 0.0, 2.0]))
 
 
 def test_diebold_mariano_sign():

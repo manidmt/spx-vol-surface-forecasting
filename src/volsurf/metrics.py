@@ -93,9 +93,22 @@ def mae_by_tenor(errs: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
+def rmse_by_tenor(errs: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """RMSE per tenor (models x tenors) over all days and points of the tenor, in column order."""
+    rows = {
+        name: np.sqrt((e**2).T.groupby(level="tenor", sort=False).mean().T.mean()) for name, e in errs.items()
+    }
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
 def mae_by_point(errs: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """MAE per surface point (points x models), in grid order."""
     return pd.DataFrame({name: e.abs().mean() for name, e in errs.items()})
+
+
+def rmse_by_point(errs: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """RMSE per surface point (points x models), in grid order."""
+    return pd.DataFrame({name: np.sqrt((e**2).mean()) for name, e in errs.items()})
 
 
 def diebold_mariano(
