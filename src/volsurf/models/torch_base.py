@@ -108,7 +108,12 @@ class TorchForecaster(Forecaster):
         Inputs are windows of the forward-filled surface (filling only uses the past); targets
         are the raw next-day changes, so rows whose target involves a NaN print are dropped.
         The last row has no next day inside ``history`` and drops out the same way.
+
+        Raises ``ValueError`` (naming the refit by the last date of ``history``) before any
+        network is built if the usable pairs cannot fill both a training and a validation
+        split, or if a scaling statistic is zero, e.g. a grid point that never moves.
         """
+        refit = f"refit on history ending {history.index[-1].date()}" if len(history) else "refit"
         with _deterministic(self.deterministic):
             n_tenors, n_moneyness = grid_shape(history)
             levels = history.ffill().to_numpy(dtype=float).reshape(len(history), n_tenors, n_moneyness)
@@ -116,12 +121,29 @@ class TorchForecaster(Forecaster):
             Y = history.diff().shift(-1).to_numpy(dtype=np.float32)
             ok = np.isfinite(X).all(axis=(1, 2, 3, 4)) & np.isfinite(Y).all(axis=1)
             Xtr, Ytr = X[ok], Y[ok]
+            n_val = self._n_val(len(Xtr))
+            if len(Xtr) - n_val < 1:
+                raise ValueError(
+                    f"{self.name}: {refit}: {len(Xtr)} usable training pairs (lookback {self.lookback}) "
+                    f"cannot fill a training split and a validation split of {n_val}"
+                )
 
             # scaling fitted on the training rows only; each target point by its own std
             # (short tenors move about four times more than long ones)
             self.sd_change = Xtr[:, 0].std()
             self.mu_level, self.sd_level = Xtr[:, 1].mean(), Xtr[:, 1].std()
             self.sd_y = Ytr.std(axis=0)
+            flat = ~(self.sd_y > 0)
+            if flat.any():
+                raise ValueError(
+                    f"{self.name}: {refit}: the target change has zero standard deviation "
+                    f"at {list(history.columns[flat])}"
+                )
+            if not (self.sd_change > 0 and self.sd_level > 0):
+                raise ValueError(
+                    f"{self.name}: {refit}: zero standard deviation of the input changes "
+                    f"({self.sd_change}) or levels ({self.sd_level})"
+                )
 
             X_scaled = self._scale(Xtr)
             Y_scaled = torch.tensor(Ytr / self.sd_y, device=self.device)
@@ -146,6 +168,10 @@ class TorchForecaster(Forecaster):
                 out = [net(x).cpu().numpy() * self.sd_y for net in self.nets]
         return np.mean(out, axis=0)[0]
 
+    def _n_val(self, n_pairs: int) -> int:
+        """Size of the early-stopping split: the last ``val_frac`` of the pairs, at least 20."""
+        return max(int(self.val_frac * n_pairs), 20)
+
     def _scale(self, X: np.ndarray) -> torch.Tensor:
         """Change channel divided by its std, level channel standardised; returned on the device."""
         X = X.copy()
@@ -159,7 +185,7 @@ class TorchForecaster(Forecaster):
         """One seed of the notebook 05 loop; returns the best-validation network and the last epoch."""
         # PyTorch has no model.fit(): the loop below is what Keras' fit() does internally
         torch.manual_seed(seed)  # ≈ keras.utils.set_random_seed: fixes init and shuffling
-        n_val = max(int(self.val_frac * len(X)), 20)
+        n_val = self._n_val(len(X))
         X_train, Y_train, X_val, Y_val = X[:-n_val], Y[:-n_val], X[-n_val:], Y[-n_val:]
         net = self.net_factory(n_tenors, n_moneyness).to(self.device)  # .to(device) ≈ placing on GPU
         # ≈ model.compile(optimizer=AdamW(...), loss=Huber(delta))
