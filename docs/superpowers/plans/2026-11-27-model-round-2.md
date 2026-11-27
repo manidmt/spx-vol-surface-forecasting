@@ -37,6 +37,15 @@ release dates (`release_date` of `data/raw/bloomberg/macro/eco_cpi_nfp.csv`, tic
 - `{j}_days_to_next`: business days from *d* to the first event strictly after *d*
   (`numpy.busday_count`), capped at 40; NaN if no later event is known.
 
+**Amendment (before any calendar run was evaluated): point-in-time schedule.** Final release
+dates are not what was scheduled at every earlier close: the 2025 and 2026 lapses in
+appropriations withdrew and moved BLS releases, the Bloomberg export lacks the 2025-12-18 CPI
+release, and the scheduled FOMC meeting of 2020-03-18 was cancelled. The calendar block therefore
+uses `load_event_schedule()`, where each entry has `known_from` and `withdrawn_from` and only the
+entries with `known_from <= d < withdrawn_from` count at the close of *d*. Revisions and their
+sources are in `src/volsurf/resources/event_schedule_revisions.csv`; the bounds are conservative
+(they can only under-state what was known).
+
 **Block `underlying`** (5 features), from `data/raw/bloomberg/spx/SPX_OHLCV.csv` (`PX_LAST`,
 `PX_HIGH`, `PX_LOW`), in percent:
 - `ret`: 100 · log(C_d / C_{d−1}); `ret_neg`: min(`ret`, 0);
