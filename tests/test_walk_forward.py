@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from volsurf.models.base import Forecaster
 from volsurf.protocol import refit_schedule, walk_forward
@@ -56,3 +57,15 @@ def test_nan_row_propagates(synthetic_surface):
     assert nan_day in out.index
     assert out.loc[after].isna().all()
     assert out.loc[synthetic_surface.index[402]].notna().all()
+
+
+def test_unsorted_index_raises(synthetic_surface):
+    shuffled = synthetic_surface.sample(frac=1.0, random_state=0)
+    with pytest.raises(ValueError, match="sorted"):
+        walk_forward(SpyForecaster(), shuffled, test_start=TEST_START)
+
+
+def test_duplicate_date_raises(synthetic_surface):
+    duplicated = pd.concat([synthetic_surface, synthetic_surface.iloc[[500]]]).sort_index()
+    with pytest.raises(ValueError, match="unique"):
+        walk_forward(SpyForecaster(), duplicated, test_start=TEST_START)

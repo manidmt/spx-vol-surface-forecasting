@@ -30,6 +30,8 @@ def walk_forward(
     next day's forecast NaN. Output has the same columns as ``surface``, indexed by test day.
     """
     index = surface.index
+    if not (index.is_monotonic_increasing and index.is_unique):
+        raise ValueError("surface.index must be sorted ascending with unique dates")
     test_days = index[index >= test_start]
     out = pd.DataFrame(np.nan, index=test_days, columns=surface.columns, dtype=float)
     for refit_date, days in refit_schedule(index, test_start):
