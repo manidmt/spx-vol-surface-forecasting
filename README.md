@@ -108,18 +108,23 @@ run.py, evaluate.py  command-line entry points
 *t−1*. Models predict the change over the last observed surface and the runner adds it back, so a
 model that predicts zero is persistence. The runner refits each model on the first test day of every
 month using only earlier dates, and asks for each day's forecast with history up to the previous
-day: a model cannot see future data even if it has a bug. A test checks this for every model by
-replacing all data after a date with noise and requiring identical forecasts up to that date.
+day, as a private copy of the earlier rows: a model cannot see future data even if it has a bug.
+A test checks this for every model by replacing with noise all data after a date, and then all data
+from that date on, and requiring identical forecasts up to that date (at a refit date and mid-month).
 
 **Running experiments.**
 
 ```bash
+uv run python -m volsurf.run configs/persistence.toml        # writes runs/persistence/
 uv run python -m volsurf.run configs/cnn_conv_head.toml      # writes runs/cnn_conv_head/
 uv run python -m volsurf.evaluate runs/persistence runs/cnn_conv_head
 ```
 
 Each run saves its predictions (`predictions.parquet`), a copy of its config and metadata (git
-commit, runtime, epochs per refit). `evaluate` compares any set of runs on the days they all cover.
+commit, runtime, epochs per refit); a rerun replaces the previous run only once it is complete.
+`evaluate` compares any set of runs on the days they all cover: MAE and RMSE overall, by tenor and by
+grid point, R² OOS and Diebold-Mariano tests against persistence and, with `--reference NAME`,
+against that run as well.
 Dates from 2026-10-08 onwards are a clean hold-out: both commands drop them unless `--holdout` is
 passed.
 
