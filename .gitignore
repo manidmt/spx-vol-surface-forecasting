@@ -7,6 +7,8 @@ CLAUDE.md
 # Data (Bloomberg: large and licensed)
 data/
 *.csv
+!/src/volsurf/resources/fomc_meetings.csv
+!/src/volsurf/resources/event_schedule_revisions.csv
 *.parquet
 *.duckdb
 *.xlsx
@@ -27,7 +29,7 @@ venv/
 # Experiment outputs
 runs/
 mlruns/
-models/
+/models/
 reports/
 figures/
 logs/

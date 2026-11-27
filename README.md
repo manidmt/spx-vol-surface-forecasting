@@ -76,14 +76,111 @@ The CNN improves on persistence at every tenor, from −1.7 % at 30 days to −0
 wings, while the AR(1) does better at long-dated at-the-money points, where it captures noise in
 the Bloomberg surface that reverts the next day.
 
+**Model round 1** (surface as the only input; models and hyperparameters fixed before any result,
+see `docs/superpowers/plans/2026-11-27-model-round-1.md`). Same 1,444 days; Diebold-Mariano
+against persistence, with p-values also Holm-adjusted over the seven models compared:
+
+| Model | MAE | RMSE | MAE vs persistence | R² OOS | DM p (abs.) | Holm p (abs.) | DM p (sq.) |
+|---|---|---|---|---|---|---|---|
+| Persistence | 0.4597 | 0.8277 | — | — | — | — | — |
+| AR(1) per point, 252 days, Huber | 0.4571 | 0.8218 | −0.6 % | +0.014 | 0.215 | 0.430 | 0.224 |
+| 3D CNN, shared head | 0.4546 | 0.8241 | −1.1 % | +0.009 | 0.058 | 0.233 | 0.617 |
+| 3D CNN, dense head | 0.4546 | 0.8231 | −1.1 % | +0.011 | 0.104 | 0.312 | 0.594 |
+| LSTM (1 layer, 64 units) | 0.4559 | 0.8239 | −0.8 % | +0.009 | 0.304 | 0.430 | 0.669 |
+| ConvLSTM (16 channels, 3×3) | 0.4528 | 0.8168 | −1.5 % | +0.026 | 0.028 | 0.138 | 0.258 |
+| Ensemble CNN + AR(1), equal weights | 0.4534 | 0.8180 | −1.4 % | +0.024 | 0.003 | 0.019 | 0.097 |
+| Ensemble CNN + LSTM + ConvLSTM + AR(1) | 0.4520 | 0.8162 | −1.7 % | +0.028 | 0.003 | 0.019 | 0.118 |
+
+The two ensembles are the first forecasts to beat persistence significantly after correcting for
+multiple comparisons (absolute loss); under squared loss no model is significant. The ConvLSTM
+is the best single network. The CNN + AR(1) ensemble was motivated by the earlier observation
+that the two models win in different regions of the surface, an observation made on this same
+test period; the four-model ensemble is free of that choice.
+
+**Model round 2** (simple exogenous inputs already on disk, see
+`docs/superpowers/plans/2026-11-27-model-round-2.md`): a *calendar* block (business days to the
+next scheduled FOMC decision, CPI and payrolls release, and whether one falls before the next
+session, from the schedule as it was known at each close, revisions included) and an *underlying*
+block (SPX return, its negative part, 5- and 21-day realised volatility, daily range). Each block
+enters the network through one zero-initialised linear layer added to its output. Same protocol,
+1,445 days common to these runs; Holm adjustment over the six exogenous runs against persistence
+and over the three variants of each network against that network:
+
+| Model | MAE | MAE vs persistence | DM p vs persistence (abs.) | Holm p | DM p vs same network without inputs (abs.) |
+|---|---|---|---|---|---|
+| 3D CNN, shared head | 0.4544 | −1.1 % | 0.052 | — | — |
+| + calendar | 0.4554 | −0.9 % | 0.119 | 0.227 | 0.504 (worse) |
+| + underlying | 0.4543 | −1.2 % | 0.042 | 0.179 | 0.924 |
+| + calendar + underlying | 0.4542 | −1.2 % | 0.036 | 0.179 | 0.877 |
+| ConvLSTM | 0.4527 | −1.5 % | 0.025 | — | — |
+| + calendar | 0.4548 | −1.1 % | 0.114 | 0.227 | 0.184 (worse) |
+| + underlying | 0.4540 | −1.2 % | 0.048 | 0.179 | 0.387 (worse) |
+| + calendar + underlying | 0.4537 | −1.3 % | 0.026 | 0.156 | 0.578 (worse) |
+
+Neither block improves on the same network without it, and no model is significant under squared
+loss. The underlying block shifts the gains from the short end to the long end of the surface
+(−1.1 % at 24 months against −0.4 % for the CNN alone, but −1.3 % instead of −1.7 % at 30 days).
+On the day of a scheduled payrolls release persistence errs more (MAE 0.57 against 0.44 on days
+with no scheduled event) and every network does worse than persistence there (+0.9 % to +3.2 %
+MAE, 69 days); the calendar block does not change this consistently.
+
 ## Repository layout
 
 ```
-notebooks/        numbered analysis notebooks
+src/volsurf/      experiment framework (see below)
+configs/          one TOML file per experiment
+tests/            pytest suite
+notebooks/        numbered analysis notebooks (01-06 are the historical record of the first stage)
+docs/             design notes and implementation plans
 data/             not included (see below)
 pyproject.toml    dependencies (managed with uv)
 uv.lock
 ```
+
+## Experiment framework
+
+Every model runs under one walk-forward protocol, implemented once in `src/volsurf/`:
+
+```
+data.py            load the clean surface; drop the hold-out period unless asked
+protocol.py        monthly refit schedule and the walk-forward runner
+models/base.py     Forecaster interface: fit(history) and predict_change(history)
+models/baselines.py  persistence and per-point AR(1) with Huber loss
+models/torch_base.py shared network trainer (Huber loss, AdamW, early stopping, seed ensemble)
+models/cnn.py      3D convolutional network over (days × tenor × moneyness)
+metrics.py         MAE/RMSE by tenor and point, R² OOS, Diebold-Mariano
+run.py, evaluate.py  command-line entry points
+```
+
+**Timing convention.** The surface of day *t* is forecast with information up to the close of
+*t−1*. Models predict the change over the last observed surface and the runner adds it back, so a
+model that predicts zero is persistence. The runner refits each model on the first test day of every
+month using only earlier dates, and asks for each day's forecast with history up to the previous
+day, as a private copy of the earlier rows: a model cannot see future data even if it has a bug.
+A test checks this for every model by replacing with noise all data after a date, and then all data
+from that date on, and requiring identical forecasts up to that date (at a refit date and mid-month).
+
+**Running experiments.**
+
+```bash
+uv run python -m volsurf.run configs/persistence.toml        # writes runs/persistence/
+uv run python -m volsurf.run configs/cnn_conv_head.toml      # writes runs/cnn_conv_head/
+uv run python -m volsurf.evaluate runs/persistence runs/cnn_conv_head
+```
+
+Each run saves its predictions (`predictions.parquet`), a copy of its config and metadata (git
+commit, runtime, epochs per refit); a rerun replaces the previous run only once it is complete.
+`evaluate` compares any set of runs on the days they all cover: MAE and RMSE overall, by tenor and by
+grid point, R² OOS and Diebold-Mariano tests against persistence and, with `--reference NAME`,
+against that run as well.
+Dates from 2026-10-08 onwards are a clean hold-out: both commands drop them unless `--holdout` is
+passed.
+
+**Adding a model.** A network is one `nn.Module` plus a factory like `make_cnn` and a registry entry
+in `models/__init__.py`; any other model subclasses `Forecaster`. Then add a TOML config.
+
+**Tests.** `uv run pytest` runs the suite; tests that need the (private) data are marked `slow` and
+skipped when the data are missing.
 
 ## Data
 
