@@ -1,5 +1,7 @@
 """Walk-forward evaluation protocol."""
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -21,7 +23,7 @@ def refit_schedule(
 
 
 def _materialise(surface: pd.DataFrame, stop: int) -> pd.DataFrame:
-    """Rows ``[0, stop)`` of ``surface`` as a fresh frame sharing no storage with it.
+    """Rows ``[0, stop)`` of ``surface`` (or of the exogenous panel) as a fresh frame sharing no storage.
 
     A positional slice of a DataFrame is a view: its values and dates keep a reference to the
     full arrays (reachable through ``ndarray.base``), so a model could read rows after its
@@ -32,8 +34,24 @@ def _materialise(surface: pd.DataFrame, stop: int) -> pd.DataFrame:
     return pd.DataFrame(values, index=dates, columns=surface.columns.copy(), copy=False)
 
 
+def _align_exog(exog: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """``exog`` reindexed to the surface dates; ``ValueError`` if it misses any of them."""
+    if not exog.index.is_unique:
+        raise ValueError("exog.index must have unique dates")
+    missing = index.difference(exog.index)
+    if len(missing) > 0:
+        raise ValueError(
+            f"exog must cover every surface date; it misses {len(missing)} surface dates, "
+            f"first {missing[0].date()}"
+        )
+    return exog.reindex(index)
+
+
 def walk_forward(
-    model: Forecaster, surface: pd.DataFrame, test_start: pd.Timestamp = TEST_START
+    model: Forecaster,
+    surface: pd.DataFrame,
+    test_start: pd.Timestamp = TEST_START,
+    exog: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Level forecasts for every test day: ``surface[t-1] + model.predict_change(surface[:t-1])``.
 
@@ -44,8 +62,15 @@ def walk_forward(
     copy, so a NaN row makes the next day's forecast NaN. Output has the same columns as
     ``surface``, indexed by test day.
 
+    ``exog`` (optional) is a panel of exogenous inputs whose row ``d`` holds only what is known
+    at the close of ``d``. It is reindexed to the surface dates and sliced with exactly the
+    surface's rules: ``fit`` gets the rows strictly before the refit date and the forecast for
+    ``t`` the rows up to ``t-1``, as private copies, passed as the ``exog`` keyword. Without
+    ``exog`` the model is called with the history alone.
+
     Raises ``ValueError`` if the index is not sorted and unique, if ``test_start`` is not
-    after the first date, or if ``predict_change`` does not return shape ``(n_points,)``.
+    after the first date, if ``exog`` has duplicate dates or misses a surface date, or if
+    ``predict_change`` does not return shape ``(n_points,)``.
     """
     index = surface.index
     if not (index.is_monotonic_increasing and index.is_unique):
@@ -53,15 +78,24 @@ def walk_forward(
     test_days = index[index >= test_start]
     if len(test_days) > 0 and test_days[0] == index[0]:
         raise ValueError(f"test_start ({test_start}) must be after the first date of the data ({index[0]})")
+    aligned = None if exog is None else _align_exog(exog, index)
+
+    def call(method: Callable, stop: int):
+        """Call ``model.fit`` or ``model.predict_change`` on fresh copies of rows ``[0, stop)``."""
+        history = _materialise(surface, stop)
+        if aligned is None:
+            return method(history)
+        return method(history, exog=_materialise(aligned, stop))
+
     levels = surface.to_numpy(dtype=float, copy=True)  # the runner's copy, never handed to the model
     n_points = surface.shape[1]
     out = np.full((len(test_days), n_points), np.nan)
     row = 0
     for refit_date, days in refit_schedule(index, test_start):
-        model.fit(_materialise(surface, index.get_loc(refit_date)))
+        call(model.fit, index.get_loc(refit_date))
         for t in days:
             pos = index.get_loc(t)
-            change = np.asarray(model.predict_change(_materialise(surface, pos)), dtype=float)
+            change = np.asarray(call(model.predict_change, pos), dtype=float)
             if change.shape != (n_points,):
                 raise ValueError(
                     f"{model.name}: predict_change for {t.date()} returned shape {change.shape}, "

@@ -165,3 +165,103 @@ def test_wrong_output_shape_raises(synthetic_surface, change):
     first_day = synthetic_surface.index[synthetic_surface.index >= TEST_START][0]
     with pytest.raises(ValueError, match=rf"fixed_output.*{first_day.date()}.*\(63,\)"):
         walk_forward(FixedOutput(change), synthetic_surface, test_start=TEST_START)
+
+
+@pytest.fixture
+def synthetic_exog(synthetic_surface) -> pd.DataFrame:
+    """Three exogenous columns on the surface dates, with a NaN in one of them."""
+    rng = np.random.default_rng(1)
+    exog = pd.DataFrame(
+        rng.normal(size=(len(synthetic_surface), 3)), index=synthetic_surface.index, columns=["a", "b", "c"]
+    )
+    exog.iloc[50, 1] = np.nan
+    return exog
+
+
+class ExogSpy(Forecaster):
+    """Records the exogenous rows seen by every fit and predict call; forecasts no change."""
+
+    name = "exog_spy"
+
+    def __init__(self, full_exog: pd.DataFrame) -> None:
+        super().__init__()
+        self.full_values = full_exog.to_numpy()
+        self.full_dates = full_exog.index.asi8
+        self.fit_seen: list[pd.DataFrame] = []
+        self.predict_seen: list[pd.DataFrame] = []
+
+    def _check(self, history: pd.DataFrame, exog: pd.DataFrame | None) -> pd.DataFrame:
+        assert exog is not None
+        pd.testing.assert_index_equal(exog.index, history.index, check_exact=True)
+        values = exog.to_numpy()
+        for array in (*_base_chain(values), *_base_chain(exog.index.asi8)):
+            assert array.size <= exog.size  # nothing beyond the last visible row is reachable
+            assert not np.shares_memory(array, self.full_values)
+            assert not np.shares_memory(array, self.full_dates)
+        return exog.copy()
+
+    def fit(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> None:
+        self.fit_seen.append(self._check(history, exog))
+
+    def predict_change(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> np.ndarray:
+        self.predict_seen.append(self._check(history, exog))
+        return np.zeros(history.shape[1])
+
+
+def test_exog_sliced_like_surface(synthetic_surface, synthetic_exog):
+    spy = ExogSpy(synthetic_exog)
+    out = walk_forward(spy, synthetic_surface, test_start=TEST_START, exog=synthetic_exog)
+    index = synthetic_surface.index
+    schedule = refit_schedule(index, TEST_START)
+    assert len(spy.fit_seen) == len(schedule)
+    for seen, (refit_date, _) in zip(spy.fit_seen, schedule, strict=True):
+        pd.testing.assert_frame_equal(seen, synthetic_exog.loc[index < refit_date], check_freq=False)
+    assert len(spy.predict_seen) == len(out)
+    for seen, t in zip(spy.predict_seen, out.index, strict=True):
+        pd.testing.assert_frame_equal(seen, synthetic_exog.loc[index < t], check_freq=False)
+        assert seen.index[-1] == index[index.get_loc(t) - 1]
+    pd.testing.assert_frame_equal(out, synthetic_surface.shift(1).loc[out.index])
+
+
+def test_exog_reindexed_to_surface(synthetic_surface, synthetic_exog):
+    # extra dates (before, inside and after the surface) and a shuffled order are dropped by reindexing
+    extra = pd.DataFrame(
+        99.0,
+        index=pd.DatetimeIndex(["2018-12-31", "2019-06-01", "2030-01-01"]),
+        columns=synthetic_exog.columns,
+    )
+    messy = pd.concat([synthetic_exog, extra]).sample(frac=1.0, random_state=0)
+    spy = ExogSpy(messy)
+    walk_forward(spy, synthetic_surface, test_start=TEST_START, exog=messy)
+    last = spy.predict_seen[-1]
+    pd.testing.assert_frame_equal(last, synthetic_exog.iloc[: len(last)], check_freq=False)
+
+
+def test_exog_must_cover_every_surface_date(synthetic_surface, synthetic_exog):
+    spy = ExogSpy(synthetic_exog)
+    missing = synthetic_exog.drop(synthetic_exog.index[[10, 300]])
+    with pytest.raises(ValueError, match=r"exog.*2 surface dates.*2019-01-15"):
+        walk_forward(spy, synthetic_surface, test_start=TEST_START, exog=missing)
+    assert spy.fit_seen == []
+
+
+def test_exog_duplicate_date_raises(synthetic_surface, synthetic_exog):
+    duplicated = pd.concat([synthetic_exog, synthetic_exog.iloc[[7]]])
+    with pytest.raises(ValueError, match="exog.*unique"):
+        walk_forward(ExogSpy(synthetic_exog), synthetic_surface, test_start=TEST_START, exog=duplicated)
+
+
+def test_exog_vandal_cannot_change_caller_panel(synthetic_surface, synthetic_exog):
+    class ExogVandal(Forecaster):
+        name = "exog_vandal"
+
+        def fit(self, history, exog=None):
+            exog.iloc[:, :] = 1e6
+
+        def predict_change(self, history, exog=None):
+            exog.iloc[:, :] = 1e6
+            return np.zeros(history.shape[1])
+
+    original = synthetic_exog.copy()
+    walk_forward(ExogVandal(), synthetic_surface, test_start=TEST_START, exog=synthetic_exog)
+    pd.testing.assert_frame_equal(synthetic_exog, original)

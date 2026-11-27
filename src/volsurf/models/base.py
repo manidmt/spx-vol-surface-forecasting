@@ -4,6 +4,9 @@ Timing convention: the runner owns time. For a forecast day ``t`` it hands the m
 ``history`` ending at ``t-1`` (the previous index date); ``fit`` receives data strictly
 before the refit date. The model returns the forecast of ``surface[t] - surface[t-1]``
 in column order, and never sees anything dated ``t`` or later.
+
+Exogenous inputs, when used, arrive as ``exog``: a panel indexed like ``history`` (same dates)
+whose row ``d`` holds only what is known at the close of ``d``.
 """
 
 from abc import ABC, abstractmethod
@@ -21,9 +24,9 @@ class Forecaster(ABC):
         self.fit_log: list[dict] = []
 
     @abstractmethod
-    def fit(self, history: pd.DataFrame) -> None:
+    def fit(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> None:
         """Fit on the raw surface strictly before the refit date (NaN rows included)."""
 
     @abstractmethod
-    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+    def predict_change(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> np.ndarray:
         """Forecast ``surface[t] - surface[t-1]``, shape ``(n_points,)``; ``history`` ends at t-1."""

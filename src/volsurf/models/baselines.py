@@ -1,4 +1,7 @@
-"""Baseline forecasters: persistence and rolling AR(1) with a Huber loss."""
+"""Baseline forecasters: persistence and rolling AR(1) with a Huber loss.
+
+Both accept and ignore exogenous inputs (``exog``).
+"""
 
 import numpy as np
 import pandas as pd
@@ -12,10 +15,10 @@ class Persistence(Forecaster):
 
     name = "persistence"
 
-    def fit(self, history: pd.DataFrame) -> None:
+    def fit(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> None:
         """Nothing to fit."""
 
-    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+    def predict_change(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> np.ndarray:
         """Zero change at every grid point."""
         return np.zeros(history.shape[1])
 
@@ -33,7 +36,7 @@ class AR1Huber(Forecaster):
         self.name = "ar1_expanding_huber" if window is None else f"ar1_rolling{window}_huber"
         self.params: np.ndarray | None = None  # (n_points, 2): intercept, slope
 
-    def fit(self, history: pd.DataFrame) -> None:
+    def fit(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> None:
         """Estimate intercept and slope for every column from the changes in ``history``."""
         d = history.diff()
         params = np.full((history.shape[1], 2), np.nan)
@@ -49,7 +52,7 @@ class AR1Huber(Forecaster):
         self.params = params
         self.fit_log.append({"n_history": len(history)})
 
-    def predict_change(self, history: pd.DataFrame) -> np.ndarray:
+    def predict_change(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> np.ndarray:
         """``c + b * d_last`` with ``d_last = history[-1] - history[-2]`` (NaN if undefined)."""
         if self.params is None:
             raise RuntimeError("fit must be called before predict_change")
