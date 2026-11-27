@@ -76,6 +76,27 @@ The CNN improves on persistence at every tenor, from −1.7 % at 30 days to −0
 wings, while the AR(1) does better at long-dated at-the-money points, where it captures noise in
 the Bloomberg surface that reverts the next day.
 
+**Model round 1** (surface as the only input; models and hyperparameters fixed before any result,
+see `docs/superpowers/plans/2026-11-27-model-round-1.md`). Same 1,444 days; Diebold-Mariano
+against persistence, with p-values also Holm-adjusted over the seven models compared:
+
+| Model | MAE | RMSE | MAE vs persistence | R² OOS | DM p (abs.) | Holm p (abs.) | DM p (sq.) |
+|---|---|---|---|---|---|---|---|
+| Persistence | 0.4597 | 0.8277 | — | — | — | — | — |
+| AR(1) per point, 252 days, Huber | 0.4571 | 0.8218 | −0.6 % | +0.014 | 0.215 | 0.430 | 0.224 |
+| 3D CNN, shared head | 0.4546 | 0.8241 | −1.1 % | +0.009 | 0.058 | 0.233 | 0.617 |
+| 3D CNN, dense head | 0.4546 | 0.8231 | −1.1 % | +0.011 | 0.104 | 0.312 | 0.594 |
+| LSTM (1 layer, 64 units) | 0.4559 | 0.8239 | −0.8 % | +0.009 | 0.304 | 0.430 | 0.669 |
+| ConvLSTM (16 channels, 3×3) | 0.4528 | 0.8168 | −1.5 % | +0.026 | 0.028 | 0.138 | 0.258 |
+| Ensemble CNN + AR(1), equal weights | 0.4534 | 0.8180 | −1.4 % | +0.024 | 0.003 | 0.019 | 0.097 |
+| Ensemble CNN + LSTM + ConvLSTM + AR(1) | 0.4520 | 0.8162 | −1.7 % | +0.028 | 0.003 | 0.019 | 0.118 |
+
+The two ensembles are the first forecasts to beat persistence significantly after correcting for
+multiple comparisons (absolute loss); under squared loss no model is significant. The ConvLSTM
+is the best single network. The CNN + AR(1) ensemble was motivated by the earlier observation
+that the two models win in different regions of the surface, an observation made on this same
+test period; the four-model ensemble is free of that choice.
+
 ## Repository layout
 
 ```
