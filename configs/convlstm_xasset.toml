@@ -1,0 +1,10 @@
+name = "convlstm_xasset"
+kind = "convlstm"
+test_start = "2021-01-01"
+
+[params]
+hidden_channels = 16
+kernel_size = 3
+lookback = 5
+seeds = 5
+exog = ["rates", "credit", "cross_vol", "sectors"]
