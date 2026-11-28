@@ -1,0 +1,6 @@
+name = "factor_har"
+kind = "factor_har"
+test_start = "2021-01-01"
+
+[params]
+n_factors = 5

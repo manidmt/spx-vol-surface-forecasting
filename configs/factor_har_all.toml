@@ -1,0 +1,7 @@
+name = "factor_har_all"
+kind = "factor_har"
+test_start = "2021-01-01"
+
+[params]
+n_factors = 5
+exog = ["calendar", "underlying", "rates", "credit", "cross_vol", "sectors"]
