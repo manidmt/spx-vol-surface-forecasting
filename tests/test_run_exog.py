@@ -51,9 +51,14 @@ def _write(tmp_path: Path, kind: str, params: str, name: str = "exog_run") -> Pa
     return config
 
 
-def test_run_with_exog(tmp_path, synthetic_data, synthetic_surface, fake_features):
+@pytest.mark.parametrize(
+    "settings",
+    [{}, {"exog_scaling": "robust", "exog_clip": 3.0, "exog_l2": [0.0, 0.1]}],
+)
+def test_run_with_exog(tmp_path, synthetic_data, synthetic_surface, fake_features, settings):
     calls, build_exog = fake_features
     params = f'{TINY_CNN}deterministic = true\nexog = ["calendar", "underlying"]\n'
+    params += "".join(f"{key} = {json.dumps(value)}\n" for key, value in settings.items())
     run_dir = run.main([str(_write(tmp_path, "cnn", params)), "--runs-dir", str(tmp_path / "runs")])
     assert len(calls) == 1
     assert calls[0][0] == ["calendar", "underlying"]
@@ -62,7 +67,7 @@ def test_run_with_exog(tmp_path, synthetic_data, synthetic_surface, fake_feature
     assert meta["exog"] == {"blocks": ["calendar", "underlying"], "features": ["f1", "f2"]}
     model = make_cnn(
         "exog_run", head="conv", lookback=5, seeds=1, epochs=2, patience=1, channels=4, device="cpu",
-        deterministic=True, n_exog=2,
+        deterministic=True, n_exog=2, **settings,
     )  # fmt: skip
     panel = build_exog([], synthetic_surface.index)
     expected = walk_forward(model, synthetic_surface, pd.Timestamp(TEST_START), exog=panel)

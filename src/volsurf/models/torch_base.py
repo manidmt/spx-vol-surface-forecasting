@@ -6,7 +6,7 @@ the daily change and the level. PyTorch uses a *channels-first* layout, so one s
 n_moneyness)``; Keras' default is channels-last, ``(batch, time, tenor, moneyness, channels)``.
 
 Optional exogenous inputs (``n_exog > 0``) enter through ``ExogBranch``: a linear map of the
-standardised exogenous row of the window's last day, added to the network's output.
+scaled exogenous row of the window's last day, added to the network's output.
 """
 
 from collections.abc import Callable, Iterator
@@ -42,7 +42,7 @@ def make_windows(levels: np.ndarray, lookback: int) -> np.ndarray:
 class ExogBranch(nn.Module):
     """Wrap a surface network: ``forward(x, z) = net(x) + linear(z)``.
 
-    ``z`` is ``(batch, n_exog)`` standardised exogenous inputs; ``linear`` maps them to the
+    ``z`` is ``(batch, n_exog)`` scaled exogenous inputs; ``linear`` maps them to the
     ``n_points`` scaled changes and starts at zero, so the untrained wrapper forecasts exactly
     what ``net`` does (persistence for the zero-initialised heads). In Keras this would be a
     functional model with two inputs, ``Add()([net(x), Dense(n_points, kernel_initializer="zeros",
@@ -91,11 +91,19 @@ class TorchForecaster(Forecaster):
 
     ``n_exog > 0`` wraps every network in ``ExogBranch``: ``fit`` and ``predict_change`` then
     require an ``exog`` panel with ``n_exog`` columns and the same dates as ``history``. The
-    exogenous row of day ``i`` goes with the window ending at ``i``; it is standardised with the
-    training rows' mean and standard deviation (a zero standard deviation is replaced by 1), and
-    training rows with any non-finite exogenous value are dropped. A non-finite exogenous value
-    on the last row makes the forecast NaN. With ``n_exog = 0`` (the default) no exogenous
-    input is accepted and training is exactly the surface-only one.
+    exogenous row of day ``i`` goes with the window ending at ``i``. Rows with non-finite
+    inputs are dropped from fitting and produce NaN forecasts. ``exog_scaling="standard"``
+    uses the mean and standard deviation of the usable fitting rows. ``"robust"`` uses
+    the median and IQR / 1.349, falling back to the standard deviation for a zero IQR.
+    A zero standard deviation is replaced by 1. ``exog_clip`` optionally bounds scaled
+    inputs symmetrically during fitting and prediction.
+
+    ``exog_l2`` penalises the squared Frobenius norm of the branch weight matrix in the
+    training loss. A list selects the penalty per refit by seed 0's plain Huber validation
+    loss, favouring the larger penalty in a tie. The fit log records the selected penalty,
+    seed 0's validation losses in candidate order (one entry for a scalar), and the final
+    branch weight norm for each seed. Exogenous settings require ``n_exog > 0`` when they
+    differ from their defaults.
     """
 
     def __init__(
@@ -114,6 +122,9 @@ class TorchForecaster(Forecaster):
         device: str | None = None,
         deterministic: bool = False,
         n_exog: int = 0,
+        exog_scaling: str = "standard",
+        exog_clip: float | None = None,
+        exog_l2: list[float] | float = 0.0,
     ) -> None:
         super().__init__()
         self.name = name
@@ -130,13 +141,25 @@ class TorchForecaster(Forecaster):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.deterministic = deterministic
         self.n_exog = n_exog
+        if exog_scaling not in ("standard", "robust"):
+            raise ValueError("exog_scaling must be 'standard' or 'robust'")
+        if exog_clip is not None and not exog_clip > 0:
+            raise ValueError("exog_clip must be positive")
+        penalties = exog_l2 if isinstance(exog_l2, list) else [exog_l2]
+        if not penalties or any(not np.isfinite(value) or value < 0 for value in penalties):
+            raise ValueError("exog_l2 must contain one or more finite, non-negative penalties")
+        if not n_exog and (exog_scaling != "standard" or exog_clip is not None or exog_l2 != 0.0):
+            raise ValueError("non-default exog_* settings require n_exog > 0")
+        self.exog_scaling = exog_scaling
+        self.exog_clip = exog_clip
+        self.exog_l2 = exog_l2
         self.nets: list[nn.Module] = []
         # scaling statistics, fitted on the training rows at each refit
         self.sd_change: np.float32 | None = None
         self.mu_level: np.float32 | None = None
         self.sd_level: np.float32 | None = None
         self.sd_y: np.ndarray | None = None
-        self.mu_z: np.ndarray | None = None  # exogenous mean and std (n_exog > 0 only)
+        self.mu_z: np.ndarray | None = None  # exogenous centre and scale (n_exog > 0 only)
         self.sd_z: np.ndarray | None = None
 
     def fit(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> None:
@@ -190,16 +213,46 @@ class TorchForecaster(Forecaster):
             inputs = [self._scale(Xtr)]
             if self.n_exog:
                 Ztr = Z[ok]
-                self.mu_z, self.sd_z = Ztr.mean(axis=0), Ztr.std(axis=0)
+                self.sd_z = Ztr.std(axis=0)
+                if self.exog_scaling == "robust":
+                    self.mu_z = np.median(Ztr, axis=0)
+                    q25, q75 = np.percentile(Ztr, [25, 75], axis=0)
+                    robust_scale = ((q75 - q25) / 1.349).astype(Ztr.dtype)
+                    self.sd_z = np.where(robust_scale > 0, robust_scale, self.sd_z)
+                else:
+                    self.mu_z = Ztr.mean(axis=0)
                 self.sd_z[self.sd_z == 0] = 1.0  # a constant column, e.g. no event in the window
                 inputs.append(self._scale_exog(Ztr))
             Y_scaled = torch.tensor(Ytr / self.sd_y, device=self.device)
             self.nets, epochs = [], []
+            penalties = self.exog_l2 if isinstance(self.exog_l2, list) else [self.exog_l2]
+            chosen = penalties[0]
+            val_losses = []
             for seed in range(self.seeds):
-                net, last_epoch = self._train(inputs, Y_scaled, seed, n_tenors, n_moneyness)
+                if seed == 0:
+                    best_key = (np.inf, 0.0)
+                    for penalty in penalties:
+                        candidate, candidate_epoch, val = self._train(
+                            inputs, Y_scaled, seed, n_tenors, n_moneyness, penalty
+                        )
+                        val_losses.append(val)
+                        key = (val, -penalty)
+                        if key < best_key:
+                            best_key = key
+                            net, last_epoch, chosen = candidate, candidate_epoch, penalty
+                        del candidate
+                else:
+                    net, last_epoch, _ = self._train(inputs, Y_scaled, seed, n_tenors, n_moneyness, chosen)
                 self.nets.append(net)
                 epochs.append(last_epoch)
-        self.fit_log.append({"refit": history.index[-1], "epochs": epochs})
+            log = {"refit": history.index[-1], "epochs": epochs}
+            if self.n_exog:
+                log.update(
+                    exog_l2=chosen,
+                    exog_val_loss=val_losses,
+                    exog_weight_norm=[net.linear.weight.detach().norm().item() for net in self.nets],
+                )
+        self.fit_log.append(log)
 
     def predict_change(self, history: pd.DataFrame, exog: pd.DataFrame | None = None) -> np.ndarray:
         """Mean forecast of the seed networks from the window (and exogenous row) of the last day."""
@@ -212,7 +265,10 @@ class TorchForecaster(Forecaster):
             levels = recent.to_numpy(dtype=float).reshape(len(recent), n_tenors, n_moneyness)
             inputs = [self._scale(make_windows(levels, self.lookback)[-1:])]
             if self.n_exog:
-                inputs.append(self._scale_exog(exog.iloc[-1:].to_numpy(dtype=np.float32)))
+                Z = exog.iloc[-1:].to_numpy(dtype=np.float32)
+                if self.exog_clip is not None and not np.isfinite(Z).all():
+                    return np.full(n_tenors * n_moneyness, np.nan, dtype=np.float32)
+                inputs.append(self._scale_exog(Z))
             # torch.no_grad() ≈ model.predict: no gradients are recorded
             with torch.no_grad():
                 out = [net(*inputs).cpu().numpy() * self.sd_y for net in self.nets]
@@ -230,8 +286,11 @@ class TorchForecaster(Forecaster):
             raise ValueError(f"{self.name}: exog must have the same dates as history")
 
     def _scale_exog(self, Z: np.ndarray) -> torch.Tensor:
-        """Exogenous rows standardised with the training statistics; returned on the device."""
-        return torch.tensor((Z - self.mu_z) / self.sd_z, device=self.device)
+        """Scale and optionally clip exogenous rows, then return them on the device."""
+        scaled = (Z - self.mu_z) / self.sd_z
+        if self.exog_clip is not None:
+            scaled = np.clip(scaled, -self.exog_clip, self.exog_clip)
+        return torch.tensor(scaled, device=self.device)
 
     def _n_val(self, n_pairs: int) -> int:
         """Size of the early-stopping split: the last ``val_frac`` of the pairs, at least 20."""
@@ -245,9 +304,15 @@ class TorchForecaster(Forecaster):
         return torch.tensor(X, device=self.device)
 
     def _train(
-        self, inputs: list[torch.Tensor], Y: torch.Tensor, seed: int, n_tenors: int, n_moneyness: int
-    ) -> tuple[nn.Module, int]:
-        """One seed of the notebook 05 loop; returns the best-validation network and the last epoch.
+        self,
+        inputs: list[torch.Tensor],
+        Y: torch.Tensor,
+        seed: int,
+        n_tenors: int,
+        n_moneyness: int,
+        exog_l2: float,
+    ) -> tuple[nn.Module, int, float]:
+        """Train one seed and return its best network, last epoch and best plain Huber loss.
 
         ``inputs`` holds the scaled windows and, with exogenous inputs, the scaled exogenous rows,
         row-aligned with ``Y``; the network receives them as positional arguments.
@@ -271,7 +336,10 @@ class TorchForecaster(Forecaster):
             for b in torch.randperm(len(Y_train)).split(self.batch):  # shuffled minibatches
                 opt.zero_grad()  # gradients accumulate in PyTorch, so reset them every step
                 # net(*tensors) unpacks the list into positional arguments (windows[, exog])
-                loss_fn(net(*(t[b] for t in train_inputs)), Y_train[b]).backward()  # backpropagation
+                loss = loss_fn(net(*(t[b] for t in train_inputs)), Y_train[b])
+                if exog_l2:
+                    loss = loss + exog_l2 * net.linear.weight.square().sum()
+                loss.backward()
                 opt.step()  # apply the update ≈ optimizer.apply_gradients
             net.eval()  # ≈ training=False
             with torch.no_grad():
@@ -287,4 +355,4 @@ class TorchForecaster(Forecaster):
             raise RuntimeError(f"{self.name}: validation loss was never finite (seed {seed})")
         net.load_state_dict(best_state)  # ≈ set_weights(best)
         net.eval()
-        return net, epoch
+        return net, epoch, best
