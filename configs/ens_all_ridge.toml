@@ -1,0 +1,12 @@
+name = "ens_all_ridge"
+kind = "ensemble"
+
+[params]
+members = [
+    "ar1_rolling252_huber",
+    "cnn_conv_head",
+    "lstm",
+    "convlstm",
+    "cnn_conv_head_all_ridge",
+    "convlstm_all_ridge",
+]
