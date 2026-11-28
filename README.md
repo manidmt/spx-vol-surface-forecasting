@@ -180,6 +180,60 @@ and weak or no penalty in the 2026 refits. That is the expected pattern if the e
 relations need a long history, but nine refits are no evidence; it is a hypothesis for the
 hold-out.
 
+**Diagnostics, surface memory, option calendar and a factor model** (exploratory: designed after
+the earlier rounds, fixed before its own runs; 1,444 days).
+
+*Diagnostics on the saved forecasts* (`python -m volsurf.diagnose`), with tests suited to nested
+models (Clark-West) and to state-dependent performance (Giacomini-White):
+- Persistence is nested in every model, and under Clark-West every network beats it (CNN p = 0.008,
+  ConvLSTM p = 0.003, one-sided), although Diebold-Mariano under absolute loss does not reach 5 % for
+  the single networks. Detecting a 1 % MAE gain over persistence with 80 % power would take about
+  4,000-5,300 days; the test period has 1,444.
+- Against the same network without exogenous inputs the comparison is far less noisy: about
+  300-1,500 days suffice for a 1 % gain. The regularised exogenous runs gain nothing there, so any
+  gain they bring is below roughly 1 %.
+- Their damage concentrates on calm days: in the lowest tercile of the trailing 21-day mean absolute
+  change of the 30-day ATM vol (known before each forecast), the ridge variants lose about 0.9 % to
+  their base network (p 0.001-0.01), and they are neutral in the highest tercile.
+
+*New runs.* Two extra input channels with the level minus its 22- and 66-day means (*memory*); a
+deterministic option-market calendar for the next session (calendar-day gap, monthly and quarterly
+SPX expiry, VIX settlement, days to expiry, turn of the month) and the SPX return split into its
+overnight and intraday parts (*session*), both through the ridge branch; a ridge model on 5 PCA
+factors of the changes with HAR terms (*factor*); and two combinations of saved forecasts. Holm over
+the ten runs against persistence and over the nine comparisons with each run's twin (absolute loss;
+Clark-West as the secondary test for nested pairs):
+
+| Run | MAE vs persistence | DM p (Holm) | MAE vs twin | DM p vs twin (Holm) | CW p vs twin (Holm) |
+|---|---|---|---|---|---|
+| CNN + memory | −1.2 % | 0.092 (0.213) | −0.0 % | 0.919 (1.000) | 0.062 (0.374) |
+| ConvLSTM + memory | −1.0 % | 0.185 (0.213) | +0.6 % | 0.117 (0.821) | 0.856 (1.000) |
+| CNN + option calendar | −1.4 % | 0.025 (0.147) | −0.3 % | 0.221 (1.000) | < 0.001 (< 0.001) |
+| ConvLSTM + option calendar | −1.6 % | 0.026 (0.147) | −0.1 % | 0.790 (1.000) | 0.002 (0.017) |
+| CNN + session | −1.1 % | 0.071 (0.213) | −0.0 % | 0.922 (1.000) | 0.006 (0.040) |
+| ConvLSTM + session | −1.4 % | 0.030 (0.147) | +0.1 % | 0.586 (1.000) | 0.259 (1.000) |
+| Factor model | +3.0 % | < 0.001 (< 0.001), worse | — | — | — |
+| Factor model + all exogenous blocks | +4.6 % | < 0.001 (< 0.001), worse | +1.6 % | 0.004 (0.034), worse | 0.192 (0.959) |
+| 0.5 persistence + 0.5 four-model ensemble | −1.1 % | < 0.001 (< 0.001) | +0.6 % | 0.046 (0.370) | 0.468 (1.000) |
+| Six-model ensemble (four models + two ridge-exogenous networks) | −1.7 % | 0.005 (0.032) | +0.0 % | 0.634 (1.000) | 0.421 (1.000) |
+
+Twins: the network without inputs; the factor model without exogenous inputs; the four-model
+ensemble of round 1.
+
+- No new input improves on its twin under the primary test. Under Clark-West the option calendar is
+  significant for both networks and the session split for the CNN: the population coefficients of
+  these branches are not zero, but the gain does not survive estimation noise in MAE. On the short
+  end (30 days to 3 months), where the calendar should act, the gain over the twin is at most
+  −0.4 % (p 0.19). The validation split chooses the strongest penalty in about half the refits.
+- Longer memory does not help: the ConvLSTM gets worse (+0.6 %, not significant).
+- The factor model loses to persistence and to the AR(1). Its validation split always chose the
+  largest penalty of the grid; rerun outside this round with a grid up to 10⁶, it chooses the largest
+  penalty in 41 of 70 refits and ends at persistence (+0.2 %): the factor regressors carry no usable
+  signal under this loss.
+- Shrinking the ensemble halfway to persistence makes it more significant against persistence (lower
+  variance of the loss differential) but loses 0.6 % of MAE; adding the two ridge-exogenous networks to
+  the ensemble changes nothing.
+
 ## Repository layout
 
 ```
@@ -202,10 +256,12 @@ data.py            load the clean surface; drop the hold-out period unless asked
 protocol.py        monthly refit schedule and the walk-forward runner
 models/base.py     Forecaster interface: fit(history) and predict_change(history)
 models/baselines.py  persistence and per-point AR(1) with Huber loss
+models/factor.py   ridge forecasts of PCA factors of the changes with HAR terms
 models/torch_base.py shared network trainer (Huber loss, AdamW, early stopping, seed ensemble)
 models/cnn.py      3D convolutional network over (days × tenor × moneyness)
 metrics.py         MAE/RMSE by tenor and point, R² OOS, Diebold-Mariano
-run.py, evaluate.py  command-line entry points
+diagnostics.py     Clark-West, Giacomini-White, power, tables by year and by ex-ante state
+run.py, evaluate.py, diagnose.py  command-line entry points
 ```
 
 **Timing convention.** The surface of day *t* is forecast with information up to the close of
