@@ -15,7 +15,7 @@ import pandas as pd
 from volsurf.data import load_surface
 from volsurf.ensemble import average_runs
 from volsurf.io import save_run, validate_run_name
-from volsurf.models import NEURAL_KINDS, build_model
+from volsurf.models import EXOG_KINDS, build_model
 from volsurf.protocol import walk_forward
 
 
@@ -79,17 +79,15 @@ def _split_exog(kind: str, params: dict) -> tuple[list[str] | None, dict]:
     """Split the optional ``exog`` list of input blocks off a config's model ``params``.
 
     Returns ``(blocks, remaining params)``, with ``blocks`` None when the config has no
-    ``exog``. Raises ``ValueError`` if ``exog`` is given for a non-neural kind, is not a
+    ``exog``. Raises ``ValueError`` if ``exog`` is given for a kind that does not accept it, is not a
     non-empty list of block names, or comes with an explicit ``n_exog`` (set from the panel).
     """
     if "exog" not in params:
         return None, params
     params = dict(params)
     blocks = params.pop("exog")
-    if kind not in NEURAL_KINDS:
-        raise ValueError(
-            f"exog is only supported by the neural kinds {', '.join(NEURAL_KINDS)}, not {kind!r}"
-        )
+    if kind not in EXOG_KINDS:
+        raise ValueError(f"exog is only supported by the kinds {', '.join(EXOG_KINDS)}, not {kind!r}")
     if not (isinstance(blocks, list) and blocks and all(isinstance(b, str) for b in blocks)):
         raise ValueError(f"exog must be a non-empty list of block names, got {blocks!r}")
     if "n_exog" in params:

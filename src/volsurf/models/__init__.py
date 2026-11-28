@@ -2,8 +2,9 @@
 
 from volsurf.models.base import Forecaster
 
-KINDS = ("persistence", "ar1", "cnn", "lstm", "convlstm")
+KINDS = ("persistence", "ar1", "cnn", "lstm", "convlstm", "factor_har")
 NEURAL_KINDS = ("cnn", "lstm", "convlstm")  # trained by TorchForecaster; accept exogenous inputs
+EXOG_KINDS = (*NEURAL_KINDS, "factor_har")  # kinds that accept exogenous inputs
 
 
 def build_model(kind: str, name: str, params: dict) -> Forecaster:
@@ -32,4 +33,10 @@ def build_model(kind: str, name: str, params: dict) -> Forecaster:
         from volsurf.models.convlstm import make_convlstm
 
         return make_convlstm(name, **params)
+    if kind == "factor_har":
+        from volsurf.models.factor import FactorHAR
+
+        model = FactorHAR(**params)
+        model.name = name
+        return model
     raise ValueError(f"unknown model kind {kind!r}; valid kinds: {', '.join(KINDS)}")
