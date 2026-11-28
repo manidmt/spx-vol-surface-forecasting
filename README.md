@@ -148,6 +148,38 @@ in the next regime (2019-2020 for the first refits, then the 2022 hiking cycle).
 days with the largest moves of the 30-day ATM vol (73 days, persistence MAE 1.96 against 0.38 on
 the rest) the ConvLSTM without exogenous inputs gains 3.0 %, more than any variant with them.
 
+**Regularised exogenous branch** (a follow-up motivated by round 3a, so exploratory: it was
+designed after seeing results on this test period). Two changes to the branch, fixed before the
+runs:
+- *robust*: inputs centred on the training median, scaled by IQR / 1.349 and clipped at ±3, so that
+  the fat tails of 2020 neither shrink ordinary moves nor dominate the fit, and level inputs cannot
+  extrapolate into ranges never seen in training;
+- *ridge*: robust scaling plus an L2 penalty on the branch weights, its strength chosen at every
+  refit on the early-stopping validation split from {0, 0.001, 0.01, 0.1, 1}; the largest value
+  practically switches the branch off.
+
+Blocks: *rates*, and *all* six blocks of rounds 2 and 3a. Holm over the eight runs against
+persistence and over the four variants of each network against that network (absolute loss):
+
+| Inputs | CNN: MAE vs persistence | DM p vs CNN alone (Holm) | ConvLSTM: MAE vs persistence | DM p vs ConvLSTM alone (Holm) |
+|---|---|---|---|---|
+| none (round 1) | −1.1 % | — | −1.5 % | — |
+| rates, unregularised (round 3a) | +0.3 % | 0.001, worse | +0.1 % | < 0.001, worse |
+| rates, robust | +0.0 % | 0.001 (0.005), worse | −0.3 % | < 0.001 (0.002), worse |
+| rates, ridge | −1.0 % | 0.360 (0.918) | −1.2 % | 0.056 (0.167) |
+| all, robust | −0.9 % | 0.660 (0.918) | −0.6 % | 0.079 (0.167) |
+| all, ridge | −0.9 % | 0.306 (0.918) | −1.4 % | 0.248 (0.248) |
+
+Robust scaling alone does not remove the damage of the rates block; the ridge penalty does (rates
+with ridge against rates unregularised: −1.3 % MAE for both networks, p < 0.002). The penalty
+brings the exogenous runs back to the level of the networks without them, but not beyond: no
+variant beats its base network, and none beats persistence after the Holm adjustment (best: the
+ConvLSTM with all blocks and ridge, −1.4 %, p = 0.047, Holm 0.37). The validation split mostly
+chooses strong penalties (0.1 or 1) from 2021 to 2025, i.e. it largely switches the branch off,
+and weak or no penalty in the 2026 refits. That is the expected pattern if the exogenous
+relations need a long history, but nine refits are no evidence; it is a hypothesis for the
+hold-out.
+
 ## Repository layout
 
 ```
