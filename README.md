@@ -76,9 +76,9 @@ The CNN improves on persistence at every tenor, from −1.7 % at 30 days to −0
 wings, while the AR(1) does better at long-dated at-the-money points, where it captures noise in
 the Bloomberg surface that reverts the next day.
 
-**Model round 1** (surface as the only input; models and hyperparameters fixed before any result,
-see `docs/superpowers/plans/2026-11-27-model-round-1.md`). Same 1,444 days; Diebold-Mariano
-against persistence, with p-values also Holm-adjusted over the seven models compared:
+**Model round 1** (surface as the only input; models and hyperparameters fixed before any
+result). Same 1,444 days; Diebold-Mariano against persistence, with p-values also Holm-adjusted
+over the seven models compared:
 
 | Model | MAE | RMSE | MAE vs persistence | R² OOS | DM p (abs.) | Holm p (abs.) | DM p (sq.) |
 |---|---|---|---|---|---|---|---|
@@ -97,9 +97,8 @@ is the best single network. The CNN + AR(1) ensemble was motivated by the earlie
 that the two models win in different regions of the surface, an observation made on this same
 test period; the four-model ensemble is free of that choice.
 
-**Model round 2** (simple exogenous inputs already on disk, see
-`docs/superpowers/plans/2026-11-27-model-round-2.md`): a *calendar* block (business days to the
-next scheduled FOMC decision, CPI and payrolls release, and whether one falls before the next
+**Model round 2** (simple exogenous inputs already on disk): a *calendar* block (business days
+to the next scheduled FOMC decision, CPI and payrolls release, and whether one falls before the next
 session, from the schedule as it was known at each close, revisions included) and an *underlying*
 block (SPX return, its negative part, 5- and 21-day realised volatility, daily range). Each block
 enters the network through one zero-initialised linear layer added to its output. Same protocol,
@@ -124,9 +123,8 @@ On the day of a scheduled payrolls release persistence errs more (MAE 0.57 again
 with no scheduled event) and every network does worse than persistence there (+0.9 % to +3.2 %
 MAE, 69 days); the calendar block does not change this consistently.
 
-**Model round 3a** (cross-asset inputs from the first Bloomberg download, see
-`docs/superpowers/plans/2026-11-27-model-round-3a.md`), same linear branch, four blocks:
-*rates* (2- and 10-year Treasury and 10-year Bund changes, curve slope, change in the priced
+**Model round 3a** (cross-asset inputs from the first Bloomberg download), same linear branch,
+four blocks: *rates* (2- and 10-year Treasury and 10-year Bund changes, curve slope, change in the priced
 fed funds path, SOFR minus effective fed funds, both published the next morning and lagged a
 day), *credit* (IG and HY OAS changes, HYG implied vol), *cross-asset vol* (MOVE, OVX, EURUSD and
 USDJPY one-month ATM vol, USDJPY risk reversal) and *sectors* (mean and dispersion of the implied
