@@ -85,8 +85,8 @@ def test_run_without_exog_records_none(tmp_path, synthetic_data, fake_features):
 @pytest.mark.parametrize(
     ("kind", "params", "match"),
     [
-        ("persistence", 'exog = ["calendar"]\n', "exog.*neural"),
-        ("ar1", 'exog = ["calendar"]\n', "exog.*neural"),
+        ("persistence", 'exog = ["calendar"]\n', "exog is only supported by the kinds"),
+        ("ar1", 'exog = ["calendar"]\n', "exog is only supported by the kinds"),
         ("cnn", f"{TINY_CNN}exog = []\n", "exog.*non-empty list"),
         ("cnn", f'{TINY_CNN}exog = "calendar"\n', "exog.*non-empty list"),
         ("cnn", f'{TINY_CNN}n_exog = 2\nexog = ["calendar"]\n', "n_exog"),
