@@ -1,0 +1,13 @@
+name = "convlstm_optcal_ridge"
+kind = "convlstm"
+test_start = "2021-01-01"
+
+[params]
+hidden_channels = 16
+kernel_size = 3
+lookback = 5
+seeds = 5
+exog = ["options_calendar"]
+exog_scaling = "robust"
+exog_clip = 3.0
+exog_l2 = [0.0, 0.001, 0.01, 0.1, 1.0]

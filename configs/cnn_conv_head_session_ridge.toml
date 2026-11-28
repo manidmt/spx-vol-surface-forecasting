@@ -1,0 +1,12 @@
+name = "cnn_conv_head_session_ridge"
+kind = "cnn"
+test_start = "2021-01-01"
+
+[params]
+head = "conv"
+lookback = 5
+seeds = 5
+exog = ["session"]
+exog_scaling = "robust"
+exog_clip = 3.0
+exog_l2 = [0.0, 0.001, 0.01, 0.1, 1.0]
