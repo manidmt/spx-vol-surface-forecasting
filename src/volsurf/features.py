@@ -119,6 +119,95 @@ def underlying_features(spx: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def session_features(spx: pd.DataFrame) -> pd.DataFrame:
+    """Split the SPX close-to-close return into its overnight and intraday parts, in percent."""
+    close, open_ = spx["PX_LAST"], spx["PX_OPEN"]
+    return pd.DataFrame(
+        {
+            "ret_overnight": 100 * (open_ / close.shift() - 1),
+            "ret_intraday": 100 * (close / open_ - 1),
+        },
+        index=spx.index,
+    )
+
+
+def _trading_calendar(index: pd.DatetimeIndex, horizon_days: int = 120) -> pd.DatetimeIndex:
+    """The index dates, extended past its end with business days (``BDay``)."""
+    tail = pd.bdate_range(index[-1] + pd.offsets.BDay(), periods=horizon_days)
+    return pd.DatetimeIndex(index.append(tail)).normalize()
+
+
+def _on_or_before(day: pd.Timestamp, calendar: pd.DatetimeIndex) -> pd.Timestamp:
+    """``day`` if it is a trading day of ``calendar``, else the trading day before it.
+
+    Days after the end of ``calendar`` are taken as business days (``BDay``).
+    """
+    if day > calendar[-1]:
+        return day if day.weekday() < 5 else day - pd.offsets.BDay()
+    return calendar[calendar.searchsorted(day, side="right") - 1]
+
+
+def _third_friday(year: int, month: int) -> pd.Timestamp:
+    first = pd.Timestamp(year=year, month=month, day=1)
+    return first + pd.Timedelta(days=(4 - first.weekday()) % 7 + 14)
+
+
+def option_expiries(calendar: pd.DatetimeIndex) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
+    """Monthly SPX expiries and VIX settlement days within the span of ``calendar``.
+
+    Monthly expiry: the third Friday, or the trading day before it if that Friday is not a
+    trading day. VIX settlement: 30 calendar days before the next month's third Friday (before
+    the trading day preceding that Friday if it is a holiday), moved to the preceding trading
+    day if it is not one itself.
+    """
+    months = pd.period_range(calendar[0], calendar[-1], freq="M")
+    monthly, vix = [], []
+    for month in months:
+        friday = _third_friday(month.year, month.month)
+        monthly.append(_on_or_before(friday, calendar))
+        nxt = month + 1
+        next_friday = _third_friday(nxt.year, nxt.month)
+        if next_friday in calendar or next_friday > calendar[-1]:
+            base = next_friday
+        else:  # an exchange holiday: 30 days before the trading day preceding that Friday
+            base = _on_or_before(next_friday - pd.Timedelta(days=1), calendar)
+        vix.append(_on_or_before(base - pd.Timedelta(days=30), calendar))
+    return pd.DatetimeIndex(monthly), pd.DatetimeIndex(vix)
+
+
+def options_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Deterministic option-market calendar for the next session after each close.
+
+    Row ``d`` describes the next trading date ``d+`` (the next index date; business days past
+    the end of the index), which is known at the close of ``d`` because the exchange calendar is
+    published in advance: the calendar-day gap to ``d+`` (weekends and holidays), whether ``d+``
+    is a monthly or quarterly SPX expiry or a VIX settlement day, the trading days from ``d`` to
+    the next monthly expiry (divided by 21), and whether ``d+`` is the last or first trading day
+    of its month.
+    """
+    calendar = _trading_calendar(index)
+    days = index.normalize()
+    positions = calendar.get_indexer(days)
+    nxt = calendar[positions + 1]
+    after_next = calendar[positions + 2]
+    monthly, vix = option_expiries(calendar)
+    quarterly = monthly[monthly.month.isin([3, 6, 9, 12])]
+    expiry_pos = calendar.get_indexer(monthly)
+    upcoming = expiry_pos[np.searchsorted(expiry_pos, positions, side="right")]
+    return pd.DataFrame(
+        {
+            "gap_days": (nxt - days).days.astype(float),
+            "next_monthly_expiry": nxt.isin(monthly).astype(float),
+            "next_quarterly_expiry": nxt.isin(quarterly).astype(float),
+            "days_to_monthly_expiry": (upcoming - positions) / 21,
+            "next_vix_settlement": nxt.isin(vix).astype(float),
+            "next_month_end": (after_next.month != nxt.month).astype(float),
+            "next_month_start": (nxt.month != days.month).astype(float),
+        },
+        index=index,
+    )
+
+
 def load_market_series(paths: tuple[Path, Path, Path] = MARKET_PATHS) -> pd.DataFrame:
     """Load Bloomberg series, FX smiles and ETF implied vols in their original units."""
     frames = []
@@ -227,7 +316,7 @@ _MARKET_BLOCKS = {
     "cross_vol": cross_vol_features,
     "sectors": sectors_features,
 }
-_BLOCKS = ("calendar", "underlying", *_MARKET_BLOCKS)
+_BLOCKS = ("calendar", "underlying", "options_calendar", "session", *_MARKET_BLOCKS)
 
 
 def build_exog(blocks: list[str], index: pd.DatetimeIndex) -> pd.DataFrame:
@@ -243,6 +332,10 @@ def build_exog(blocks: list[str], index: pd.DatetimeIndex) -> pd.DataFrame:
             panels.append(calendar_features(index, load_event_schedule()))
         elif block == "underlying":
             panels.append(underlying_features(load_spx()).reindex(index))
+        elif block == "options_calendar":
+            panels.append(options_calendar_features(index))
+        elif block == "session":
+            panels.append(session_features(load_spx()).reindex(index))
         else:
             panels.append(_MARKET_BLOCKS[block](market, index))
     return pd.concat(panels, axis=1) if panels else pd.DataFrame(index=index)
