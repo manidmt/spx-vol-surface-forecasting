@@ -1,0 +1,11 @@
+name = "cnn_conv_head_rates_robust"
+kind = "cnn"
+test_start = "2021-01-01"
+
+[params]
+head = "conv"
+lookback = 5
+seeds = 5
+exog = ["rates"]
+exog_scaling = "robust"
+exog_clip = 3.0

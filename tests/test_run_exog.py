@@ -115,3 +115,21 @@ def test_round2_configs_add_only_exog(base, suffix):
     params = dict(config["params"])
     assert params.pop("exog") == ROUND2[base][suffix]
     assert {**config, "params": params, "name": base} == reference
+
+
+@pytest.mark.parametrize("base", ["cnn_conv_head", "convlstm"])
+@pytest.mark.parametrize("block", ["rates", "all"])
+@pytest.mark.parametrize("variant", ["robust", "ridge"])
+def test_regularised_configs_add_only_exog_settings(base, block, variant):
+    name = f"{base}_{block}_{variant}"
+    reference = tomllib.loads((CONFIGS / f"{base}.toml").read_text())
+    config = tomllib.loads((CONFIGS / f"{name}.toml").read_text())
+    exog = (
+        ["rates"]
+        if block == "rates"
+        else ["calendar", "underlying", "rates", "credit", "cross_vol", "sectors"]
+    )
+    extra = {"exog": exog, "exog_scaling": "robust", "exog_clip": 3.0}
+    if variant == "ridge":
+        extra["exog_l2"] = [0.0, 0.001, 0.01, 0.1, 1.0]
+    assert config == {**reference, "name": name, "params": reference["params"] | extra}
