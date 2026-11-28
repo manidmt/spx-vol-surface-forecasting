@@ -12,18 +12,19 @@ class SurfaceLSTM(nn.Module):
     """Forecast scaled changes from the final hidden state of a single LSTM layer.
 
     Each day is flattened in channel-major grid order: the daily changes come first, followed by
-    the levels, with moneyness varying fastest within each tenor. The zero-initialised head
-    forecasts no change before training, which corresponds to persistence.
+    the levels (then any surface-memory channels), with moneyness varying fastest within each
+    tenor. The zero-initialised head forecasts no change before training, which corresponds to
+    persistence.
     """
 
-    def __init__(self, n_tenors: int, n_moneyness: int, hidden: int = 64) -> None:
+    def __init__(self, n_tenors: int, n_moneyness: int, hidden: int = 64, in_channels: int = 2) -> None:
         super().__init__()
         n_points = n_tenors * n_moneyness
         # batch_first=True uses Keras LSTM's (batch, time, features) input layout. Differences a
         # Keras user would notice: gate order (PyTorch i,f,g,o; Keras i,f,c,o with other weight
         # layout), forget-bias init (Keras unit_forget_bias=True, PyTorch none) and two bias
         # vectors (b_ih and b_hh) in PyTorch.
-        self.lstm = nn.LSTM(2 * n_points, hidden, num_layers=1, batch_first=True)
+        self.lstm = nn.LSTM(in_channels * n_points, hidden, num_layers=1, batch_first=True)
         # nn.Linear(hidden, n_points) ≈ Dense(n_points, kernel_initializer="zeros", bias_initializer="zeros")
         self.head = nn.Linear(hidden, n_points)
         nn.init.zeros_(self.head.weight)
@@ -39,10 +40,12 @@ class SurfaceLSTM(nn.Module):
         return self.head(hidden[-1])
 
 
-def make_lstm(name: str, hidden: int = 64, **trainer_kwargs: Any) -> TorchForecaster:
+def make_lstm(name: str, hidden: int = 64, memory=(), **trainer_kwargs: Any) -> TorchForecaster:
     """Build a surface LSTM forecaster, passing training settings to ``TorchForecaster``."""
+    in_channels = 2 + len(memory)
     return TorchForecaster(
         name,
-        net_factory=lambda n_tenors, n_moneyness: SurfaceLSTM(n_tenors, n_moneyness, hidden),
+        net_factory=lambda n_tenors, n_moneyness: SurfaceLSTM(n_tenors, n_moneyness, hidden, in_channels),
+        memory=memory,
         **trainer_kwargs,
     )

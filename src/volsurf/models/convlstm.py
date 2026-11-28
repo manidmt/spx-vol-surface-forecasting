@@ -61,13 +61,19 @@ class SurfaceConvLSTM(nn.Module):
         Flatten()
 
     The head starts at zero, so the untrained network forecasts no change (persistence).
+    ``in_channels`` is 2 plus the number of surface-memory channels.
     """
 
     def __init__(
-        self, n_tenors: int, n_moneyness: int, hidden_channels: int = 16, kernel_size: int = 3
+        self,
+        n_tenors: int,
+        n_moneyness: int,
+        hidden_channels: int = 16,
+        kernel_size: int = 3,
+        in_channels: int = 2,
     ) -> None:
         super().__init__()
-        self.cell = ConvLSTMCell(2, hidden_channels, kernel_size)
+        self.cell = ConvLSTMCell(in_channels, hidden_channels, kernel_size)
         self.head = nn.Conv2d(hidden_channels, 1, 1)
         # ≈ kernel_initializer="zeros", bias_initializer="zeros"
         nn.init.zeros_(self.head.weight)
@@ -87,13 +93,15 @@ class SurfaceConvLSTM(nn.Module):
 
 
 def make_convlstm(
-    name: str, hidden_channels: int = 16, kernel_size: int = 3, **trainer_kwargs
+    name: str, hidden_channels: int = 16, kernel_size: int = 3, memory=(), **trainer_kwargs
 ) -> TorchForecaster:
     """Surface ConvLSTM forecaster; ``trainer_kwargs`` go to ``TorchForecaster`` (lookback, seeds, ...)."""
+    in_channels = 2 + len(memory)
     return TorchForecaster(
         name,
         net_factory=lambda n_tenors, n_moneyness: SurfaceConvLSTM(
-            n_tenors, n_moneyness, hidden_channels, kernel_size
+            n_tenors, n_moneyness, hidden_channels, kernel_size, in_channels
         ),
+        memory=memory,
         **trainer_kwargs,
     )

@@ -21,21 +21,50 @@ from volsurf.data import grid_shape
 from volsurf.models.base import Forecaster
 
 
-def make_windows(levels: np.ndarray, lookback: int) -> np.ndarray:
-    """Stack the last ``lookback`` days of every date as a two-channel window.
+def _check_memory(memory) -> tuple[int, ...]:
+    """``memory`` as a tuple of integers of at least 2, else ``ValueError``."""
+    memory = tuple(memory)
+    if any(not isinstance(m, int) or isinstance(m, bool) or m < 2 for m in memory):
+        raise ValueError(f"memory must be a list of integers of at least 2 days, got {list(memory)}")
+    return memory
+
+
+def memory_rows(lookback: int, memory=()) -> int:
+    """Days of history the last window needs: ``lookback`` plus the day before, or the memory span."""
+    memory = _check_memory(memory)
+    return lookback + max([1, *(m - 1 for m in memory)])
+
+
+def make_windows(levels: np.ndarray, lookback: int, memory=()) -> np.ndarray:
+    """Stack the last ``lookback`` days of every date as a multi-channel window.
 
     ``levels`` has shape ``(T, n_tenors, n_moneyness)``. Returns float32
-    ``(T, 2, lookback, n_tenors, n_moneyness)``: row ``i`` holds days ``i-lookback+1 … i``,
-    channel 0 is the daily change and channel 1 the level. Rows ``< lookback`` are NaN
-    (the first change of the window needs the day before it).
+    ``(T, 2 + len(memory), lookback, n_tenors, n_moneyness)``: row ``i`` holds days
+    ``i-lookback+1 … i``, channel 0 is the daily change and channel 1 the level. Rows
+    ``< lookback`` are NaN (the first change of the window needs the day before it).
+
+    Each ``m`` in ``memory`` adds a channel: at every day of the window, the level minus the
+    mean of the levels of the ``m`` days ending at that day (past only). In rows whose window
+    start has fewer than ``m - 1`` earlier days that channel is partly NaN, so fitting drops them.
     """
+    memory = _check_memory(memory)
     levels = np.asarray(levels, dtype=float)
     change = np.full_like(levels, np.nan)
     change[1:] = levels[1:] - levels[:-1]
-    X = np.full((len(levels), 2, lookback, *levels.shape[1:]), np.nan, dtype=np.float32)
+    deviations = []
+    for m in memory:
+        deviation = np.full_like(levels, np.nan)
+        csum = np.cumsum(levels, axis=0)
+        trailing = csum[m - 1 :].copy()
+        trailing[1:] -= csum[:-m]
+        deviation[m - 1 :] = levels[m - 1 :] - trailing / m
+        deviations.append(deviation)
+    X = np.full((len(levels), 2 + len(memory), lookback, *levels.shape[1:]), np.nan, dtype=np.float32)
     for i in range(lookback, len(levels)):
         X[i, 0] = change[i - lookback + 1 : i + 1]
         X[i, 1] = levels[i - lookback + 1 : i + 1]
+        for k, deviation in enumerate(deviations):
+            X[i, 2 + k] = deviation[i - lookback + 1 : i + 1]
     return X
 
 
@@ -125,6 +154,7 @@ class TorchForecaster(Forecaster):
         exog_scaling: str = "standard",
         exog_clip: float | None = None,
         exog_l2: list[float] | float = 0.0,
+        memory: list[int] | tuple[int, ...] = (),
     ) -> None:
         super().__init__()
         self.name = name
@@ -153,12 +183,14 @@ class TorchForecaster(Forecaster):
         self.exog_scaling = exog_scaling
         self.exog_clip = exog_clip
         self.exog_l2 = exog_l2
+        self.memory = _check_memory(memory)
         self.nets: list[nn.Module] = []
         # scaling statistics, fitted on the training rows at each refit
         self.sd_change: np.float32 | None = None
         self.mu_level: np.float32 | None = None
         self.sd_level: np.float32 | None = None
         self.sd_y: np.ndarray | None = None
+        self.sd_memory: np.ndarray | None = None  # one scale per memory channel
         self.mu_z: np.ndarray | None = None  # exogenous centre and scale (n_exog > 0 only)
         self.sd_z: np.ndarray | None = None
 
@@ -179,7 +211,7 @@ class TorchForecaster(Forecaster):
         with _deterministic(self.deterministic):
             n_tenors, n_moneyness = grid_shape(history)
             levels = history.ffill().to_numpy(dtype=float).reshape(len(history), n_tenors, n_moneyness)
-            X = make_windows(levels, self.lookback)
+            X = make_windows(levels, self.lookback, self.memory)
             Y = history.diff().shift(-1).to_numpy(dtype=np.float32)
             ok = np.isfinite(X).all(axis=(1, 2, 3, 4)) & np.isfinite(Y).all(axis=1)
             if self.n_exog:
@@ -204,6 +236,9 @@ class TorchForecaster(Forecaster):
                     f"{self.name}: {refit}: the target change has zero standard deviation "
                     f"at {list(history.columns[flat])}"
                 )
+            self.sd_memory = Xtr[:, 2:].std(axis=(0, 2, 3, 4))
+            if not (self.sd_memory > 0).all():
+                raise ValueError(f"{self.name}: {refit}: a memory channel has zero standard deviation")
             if not (self.sd_change > 0 and self.sd_level > 0):
                 raise ValueError(
                     f"{self.name}: {refit}: zero standard deviation of the input changes "
@@ -261,9 +296,10 @@ class TorchForecaster(Forecaster):
         self._check_exog(history, exog)
         with _deterministic(self.deterministic):
             n_tenors, n_moneyness = grid_shape(history)
-            recent = history.ffill().iloc[-(self.lookback + 1) :]  # lookback changes need one extra day
+            # lookback changes need one extra day; memory channels need their own span
+            recent = history.ffill().iloc[-memory_rows(self.lookback, self.memory) :]
             levels = recent.to_numpy(dtype=float).reshape(len(recent), n_tenors, n_moneyness)
-            inputs = [self._scale(make_windows(levels, self.lookback)[-1:])]
+            inputs = [self._scale(make_windows(levels, self.lookback, self.memory)[-1:])]
             if self.n_exog:
                 Z = exog.iloc[-1:].to_numpy(dtype=np.float32)
                 if self.exog_clip is not None and not np.isfinite(Z).all():
@@ -297,10 +333,12 @@ class TorchForecaster(Forecaster):
         return max(int(self.val_frac * n_pairs), 20)
 
     def _scale(self, X: np.ndarray) -> torch.Tensor:
-        """Change channel divided by its std, level channel standardised; returned on the device."""
+        """Change and memory channels divided by their std, level standardised; on the device."""
         X = X.copy()
         X[:, 0] /= self.sd_change
         X[:, 1] = (X[:, 1] - self.mu_level) / self.sd_level
+        for k, sd in enumerate(self.sd_memory):
+            X[:, 2 + k] /= sd
         return torch.tensor(X, device=self.device)
 
     def _train(
